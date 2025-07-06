@@ -27,6 +27,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
 # IDE
 .vscode/
@@ -99,3 +100,15 @@ coverage.xml
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Environment files
+.env
+.env.*
+
+# Secrets
+secrets.json
