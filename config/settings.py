@@ -74,14 +74,52 @@ class Settings:
             "momentum_period": 10
         }
         
+        # Real-time momentum conditions
+        self.MOMENTUM_CONDITIONS = {
+            "volume_spike": {
+                "enabled": True,
+                "threshold": 1.2,  # 현재 거래량 ≥ 전일 거래량의 120%
+                "description": "거래량 급증 조건"
+            },
+            "execution_strength": {
+                "enabled": True,
+                "threshold": 1.5,  # 체결강도 150%
+                "consecutive_ticks": 3,  # 3틱 연속
+                "description": "체결강도 조건"
+            },
+            "price_breakout": {
+                "enabled": True,
+                "breakout_ticks": 3,  # 3틱 최고가 돌파 (테스트용)
+                "rise_threshold": 0.005,  # 돌파 후 0.5% 이상 상승
+                "description": "가격 돌파 조건"
+            }
+        }
+        
+        # WebSocket settings
+        self.WEBSOCKET = {
+            "reconnect_interval": 5,  # 재연결 간격 (초)
+            "heartbeat_interval": 30,  # 하트비트 간격 (초)
+            "max_reconnect_attempts": 5,  # 최대 재연결 시도 횟수
+            "connection_timeout": 10,  # 연결 타임아웃 (초)
+            "message_timeout": 5  # 메시지 타임아웃 (초)
+        }
+        
+        # WebSocket URLs
+        self.KIWOOM_WEBSOCKET_URL = "wss://mockapi.kiwoom.com:10000/api/dostk/websocket"  # 시뮬레이션용
+        if self.ENVIRONMENT == "production":
+            self.KIWOOM_WEBSOCKET_URL = "wss://api.kiwoom.com:10000/api/dostk/websocket"  # 실제 거래용
+        
         # Risk management
         self.RISK_MANAGEMENT = {
             "max_position_size": 0.1,  # 전체 자산의 10%
+            "position_size_ratio": 0.05,  # 계좌 잔고의 5%
             "max_daily_loss": 0.05,    # 일일 최대 손실 5%
             "stop_loss": 0.05,         # 개별 종목 손절 5%
             "take_profit": 0.15,       # 개별 종목 익절 15%
             "max_positions": 5,        # 최대 보유 종목 수
-            "min_trade_amount": 100000  # 최소 거래 금액 (10만원)
+            "min_trade_amount": 100000,  # 최소 거래 금액 (10만원)
+            "min_position_size": 1,    # 최소 주문 수량
+            "max_per_stock": 1000000   # 주식별 최대 투자 금액 (100만원)
         }
         
         # Database settings
@@ -106,7 +144,12 @@ class Settings:
             "data_update_interval": 60,  # 데이터 업데이트 간격 (초)
             "log_level": "INFO",
             "max_retries": 3,
-            "timeout": 30
+            "timeout": 30,
+            "auto_execute_orders": False,  # 자동 주문 실행 여부
+            "min_confidence": 0.7,  # 최소 신뢰도 (0.0 ~ 1.0)
+            "signal_cooldown": 300,  # 신호 쿨다운 (초)
+            "enable_notifications": True,  # 알림 활성화
+            "save_signals_to_db": True  # 신호를 DB에 저장
         }
         
         # Market hours (KST)

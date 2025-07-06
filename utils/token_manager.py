@@ -24,8 +24,10 @@ except ImportError:
 class TokenManager:
     """Manages API tokens for Kiwoom API"""
     
-    def __init__(self, secrets_path: str = "config/secrets.json"):
-        self.secrets_path = Path(secrets_path)
+    def __init__(self, settings):
+        # settings: Settings 객체
+        self.settings = settings
+        self.secrets_path = Path(settings.config_path)
         self.logger = get_logger("token_manager")
         
         # API endpoints
@@ -176,10 +178,30 @@ class TokenManager:
             self.logger.error(f"Error getting current token: {e}")
             return None
 
+    async def get_valid_token(self):
+        """
+        현재 토큰을 반환하거나, 만료 시 새로 갱신해서 반환 (더미 구현)
+        """
+        env = self.settings.ENVIRONMENT
+        token = self.settings.KIWOOM_API[env].get("token", "")
+        
+        # 빈 토큰이면 더미 토큰 반환
+        if not token:
+            if env == "simulation":
+                return "dummy_token_simulation"
+            elif env == "production":
+                return "dummy_token_production"
+            else:
+                return "dummy_token_default"
+        
+        return token
+
 
 def main():
     """Main function for token management"""
-    token_manager = TokenManager()
+    from config.settings import Settings
+    settings = Settings()
+    token_manager = TokenManager(settings)
     
     print("=== Token Manager ===")
     print("1. Refresh simulation token")
