@@ -189,6 +189,93 @@ class MomentumAnalyzer:
             timestamp=stock_data.timestamp
         )
     
+    def check_price_momentum(self, stock_data: StockData) -> ConditionResult:
+        """가격 모멘텀 조건 체크"""
+        condition = self.conditions["price_momentum"]
+        if not condition["enabled"]:
+            return ConditionResult(
+                condition_name="price_momentum",
+                is_satisfied=False,
+                current_value=0,
+                threshold=0,
+                description=condition["description"],
+                timestamp=stock_data.timestamp
+            )
+        
+        # 최근 N틱의 가격 변동률 체크
+        recent_data = self.get_recent_data(stock_data.code, condition["consecutive_ticks"])
+        if len(recent_data) < condition["consecutive_ticks"]:
+            return ConditionResult(
+                condition_name="price_momentum",
+                is_satisfied=False,
+                current_value=stock_data.current_price,
+                threshold=0,
+                description=condition["description"],
+                timestamp=stock_data.timestamp
+            )
+        
+        # 연속 틱에서 가격 변동률 조건 만족 여부 체크
+        price_change = stock_data.current_price - stock_data.prev_close
+        price_change_ratio = price_change / stock_data.prev_close
+        consecutive_satisfied = all(
+            price_change_ratio >= condition["threshold"] 
+            for data in recent_data
+        )
+        
+        return ConditionResult(
+            condition_name="price_momentum",
+            is_satisfied=consecutive_satisfied,
+            current_value=price_change_ratio,
+            threshold=condition["threshold"],
+            description=condition["description"],
+            timestamp=stock_data.timestamp
+        )
+    
+    def check_volume_price_confirmation(self, stock_data: StockData) -> ConditionResult:
+        """거래량-가격 동반 상승 조건 체크"""
+        condition = self.conditions["volume_price_confirmation"]
+        if not condition["enabled"]:
+            return ConditionResult(
+                condition_name="volume_price_confirmation",
+                is_satisfied=False,
+                current_value=0,
+                threshold=0,
+                description=condition["description"],
+                timestamp=stock_data.timestamp
+            )
+        
+        # 최근 N틱의 거래량과 가격 변동률 체크
+        recent_data = self.get_recent_data(stock_data.code, condition["consecutive_ticks"])
+        if len(recent_data) < condition["consecutive_ticks"]:
+            return ConditionResult(
+                condition_name="volume_price_confirmation",
+                is_satisfied=False,
+                current_value=stock_data.current_price,
+                threshold=0,
+                description=condition["description"],
+                timestamp=stock_data.timestamp
+            )
+        
+        # 연속 틱에서 거래량과 가격 변동률 조건 만족 여부 체크
+        price_change = stock_data.current_price - stock_data.prev_close
+        price_change_ratio = price_change / stock_data.prev_close
+        volume_change = stock_data.volume - stock_data.prev_close
+        volume_change_ratio = volume_change / stock_data.prev_close
+        consecutive_satisfied = all(
+            price_change_ratio >= condition["price_threshold"] and
+            volume_change_ratio >= condition["volume_threshold"]
+            for data in recent_data
+        )
+        
+        return ConditionResult(
+            condition_name="volume_price_confirmation",
+            is_satisfied=consecutive_satisfied,
+            current_value=price_change_ratio,
+            threshold=condition["price_threshold"],
+            description=condition["description"],
+            timestamp=stock_data.timestamp
+        )
+    
     def analyze_all_conditions(self, stock_data: StockData) -> Dict[str, ConditionResult]:
         """모든 조건을 분석"""
         # 데이터 히스토리에 추가
@@ -197,7 +284,9 @@ class MomentumAnalyzer:
         results = {
             "volume_spike": self.check_volume_spike(stock_data),
             "execution_strength": self.check_execution_strength(stock_data),
-            "price_breakout": self.check_price_breakout(stock_data)
+            "price_breakout": self.check_price_breakout(stock_data),
+            "price_momentum": self.check_price_momentum(stock_data),
+            "volume_price_confirmation": self.check_volume_price_confirmation(stock_data)
         }
         
         return results

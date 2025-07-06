@@ -31,8 +31,8 @@ class TokenManager:
         self.logger = get_logger("token_manager")
         
         # API endpoints
-        self.PRODUCTION_HOST = 'https://api.kiwoom.com'
-        self.SIMULATION_HOST = 'https://mockapi.kiwoom.com'
+        self.PRODUCTION_HOST = 'https://openapi.kiwoom.com'
+        self.SIMULATION_HOST = 'https://openapi.kiwoom.com'
         
     def load_secrets(self) -> Dict:
         """Load secrets from config file"""
@@ -63,10 +63,10 @@ class TokenManager:
         url = host + endpoint
         
         headers = {
-            'Content-Type': 'application/json;charset=UTF-8',
+            'Content-Type': 'application/x-www-form-urlencoded',
         }
         
-        params = {
+        data = {
             'grant_type': 'client_credentials',
             'appkey': appkey,
             'secretkey': secretkey,
@@ -74,7 +74,7 @@ class TokenManager:
         
         try:
             self.logger.info(f"Requesting token from: {host}")
-            response = requests.post(url, headers=headers, json=params)
+            response = requests.post(url, headers=headers, data=data)
             
             self.logger.info(f"Token request status: {response.status_code}")
             self.logger.debug(f"Response content: {response.text}")

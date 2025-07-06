@@ -43,6 +43,9 @@ class WebSocketClient:
         self.message_handlers: Dict[str, Callable] = {}
         self.momentum_analyzer = MomentumAnalyzer(settings)
         
+        # 주문 매니저 (선택적)
+        self.order_manager = None
+        
         # 콜백 함수들
         self.on_connect_callback: Optional[Callable] = None
         self.on_disconnect_callback: Optional[Callable] = None
@@ -64,6 +67,11 @@ class WebSocketClient:
         self.on_trading_signal_callback = on_trading_signal
         self.on_error_callback = on_error
     
+    def set_order_manager(self, order_manager):
+        """주문 매니저 설정"""
+        self.order_manager = order_manager
+        logger.info("주문 매니저가 웹소켓 클라이언트에 연결되었습니다.")
+    
     def register_message_handler(self, message_type: str, handler: Callable):
         """메시지 타입별 핸들러 등록"""
         self.message_handlers[message_type] = handler
@@ -82,10 +90,19 @@ class WebSocketClient:
             logger.info(f"웹소켓 연결 시도: {ws_url}")
             
             # 웹소켓 연결
-            self.websocket = await asyncio.wait_for(
-                websockets.connect(ws_url),
-                timeout=self.websocket_config["connection_timeout"]
-            )
+            try:
+                self.websocket = await asyncio.wait_for(
+                    websockets.connect(ws_url),
+                    timeout=self.websocket_config["connection_timeout"]
+                )
+            except asyncio.TimeoutError:
+                raise Exception(f"웹소켓 연결 타임아웃 ({self.websocket_config['connection_timeout']}초)")
+            except websockets.exceptions.InvalidURI:
+                raise Exception(f"잘못된 웹소켓 URL: {ws_url}")
+            except websockets.exceptions.ConnectionClosed:
+                raise Exception("웹소켓 연결이 서버에 의해 거부되었습니다")
+            except Exception as e:
+                raise Exception(f"웹소켓 연결 실패: {e}")
             
             self.is_connected = True
             self.reconnect_attempts = 0
@@ -94,15 +111,17 @@ class WebSocketClient:
             logger.info("웹소켓 연결 성공")
             
             # 키움 API 로그인 메시지 전송
-            login_message = {
-                'trnm': 'LOGIN',
-                'token': token
-            }
-            await self.websocket.send(json.dumps(login_message))
-            logger.info("로그인 메시지 전송 완료")
-            
-            # 하트비트 시작
-            self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            try:
+                login_message = {
+                    'trnm': 'LOGIN',
+                    'token': token
+                }
+                await self.websocket.send(json.dumps(login_message))
+                logger.info("로그인 메시지 전송 완료")
+            except Exception as e:
+                logger.error(f"로그인 메시지 전송 실패: {e}")
+                await self.disconnect()
+                raise
             
             # 연결 콜백 호출
             if self.on_connect_callback:
@@ -110,6 +129,7 @@ class WebSocketClient:
                 
         except Exception as e:
             logger.error(f"웹소켓 연결 실패: {e}")
+            self.is_connected = False
             if self.on_error_callback:
                 await self.on_error_callback(e)
             raise
@@ -118,14 +138,6 @@ class WebSocketClient:
         """웹소켓 연결 해제"""
         if self.websocket:
             self.is_connected = False
-            
-            # 하트비트 중지
-            if self.heartbeat_task:
-                self.heartbeat_task.cancel()
-                try:
-                    await self.heartbeat_task
-                except asyncio.CancelledError:
-                    pass
             
             await self.websocket.close()
             self.websocket = None
@@ -136,90 +148,147 @@ class WebSocketClient:
             if self.on_disconnect_callback:
                 await self.on_disconnect_callback()
     
-    async def _heartbeat_loop(self):
-        """하트비트 루프"""
-        while self.is_connected:
-            try:
-                await asyncio.sleep(self.websocket_config["heartbeat_interval"])
-                
-                if self.is_connected and self.websocket:
-                    heartbeat_msg = {
-                        "trnm": "HEARTBEAT",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    await self.websocket.send(json.dumps(heartbeat_msg))
-                    self.last_heartbeat = time.time()
-                    logger.debug("하트비트 전송")
-                    
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"하트비트 전송 실패: {e}")
-                break
+
     
     async def register_stock(self, stock_code: str):
         """주식 등록 (키움 API 형식)"""
-        if not self.is_connected:
-            raise Exception("웹소켓이 연결되지 않았습니다.")
+        if not self.is_connected or not self.websocket:
+            logger.warning(f"웹소켓이 연결되지 않아 주식 등록을 건너뜁니다: {stock_code}")
+            return
         
-        # 키움 API 주식 등록 메시지 형식
-        register_msg = {
-            "trnm": "STOCK_REGISTER",
-            "stock_code": stock_code,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await self.websocket.send(json.dumps(register_msg))
-        self.registered_stocks.append(stock_code)
-        
-        logger.info(f"주식 등록: {stock_code}")
+        try:
+            # 키움 API 실시간 등록 메시지 형식
+            register_msg = {
+                "trnm": "REG",
+                "grp_no": "1",
+                "refresh": "1",
+                "data": [{
+                    "item": [stock_code],
+                    "type": ["00"],  # 실시간 시세
+                }]
+            }
+            
+            await self.websocket.send(json.dumps(register_msg))
+            self.registered_stocks.append(stock_code)
+            
+            logger.info(f"주식 등록: {stock_code}")
+        except Exception as e:
+            logger.error(f"주식 등록 실패 ({stock_code}): {e}")
+            # 연결 상태 재확인
+            if not self.websocket or self.websocket.closed:
+                self.is_connected = False
+                logger.warning("웹소켓 연결이 끊어졌습니다.")
     
     async def unregister_stock(self, stock_code: str):
         """주식 등록 해제"""
-        if not self.is_connected:
+        if not self.is_connected or not self.websocket:
             return
         
-        unregister_msg = {
-            "type": "unregister_stock",
-            "stock_code": stock_code,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await self.websocket.send(json.dumps(unregister_msg))
-        
-        if stock_code in self.registered_stocks:
-            self.registered_stocks.remove(stock_code)
-        
-        logger.info(f"주식 등록 해제: {stock_code}")
+        try:
+            # 키움 API 실시간 해제 메시지 형식
+            unregister_msg = {
+                "trnm": "REG",
+                "grp_no": "1",
+                "refresh": "1",
+                "data": [{
+                    "item": [stock_code],
+                    "type": [""],  # 빈 타입으로 해제
+                }]
+            }
+            
+            await self.websocket.send(json.dumps(unregister_msg))
+            
+            if stock_code in self.registered_stocks:
+                self.registered_stocks.remove(stock_code)
+            
+            logger.info(f"주식 등록 해제: {stock_code}")
+        except Exception as e:
+            logger.error(f"주식 등록 해제 실패 ({stock_code}): {e}")
+            if not self.websocket or self.websocket.closed:
+                self.is_connected = False
     
     async def _handle_stock_data(self, data: Dict[str, Any]):
         """주식 데이터 처리 (키움 API 형식)"""
         try:
-            # 키움 API 주식 데이터 형식에 맞춰 StockData 객체 생성
+            # 키움 API 실시간 데이터 형식에 맞춰 파싱
+            stock_code = data.get("종목코드") or data.get("stock_code")
+            if not stock_code:
+                logger.warning(f"종목코드가 없는 데이터: {data}")
+                return
+            
+            # 실시간 데이터 파싱 (키움 API 형식)
+            current_price = float(data.get("현재가", 0))
+            volume = int(data.get("거래량", 0))
+            execution_strength = float(data.get("체결강도", 0))
+            high_price = float(data.get("고가", current_price))
+            low_price = float(data.get("저가", current_price))
+            open_price = float(data.get("시가", current_price))
+            prev_close = float(data.get("전일종가", current_price))
+            
+            # 추가 실시간 데이터
+            bid_price = float(data.get("매수호가", 0))
+            ask_price = float(data.get("매도호가", 0))
+            bid_volume = int(data.get("매수호가수량", 0))
+            ask_volume = int(data.get("매도호가수량", 0))
+            
+            # StockData 객체 생성
             stock_data = StockData(
-                code=data.get("종목코드") or data.get("stock_code"),
-                current_price=float(data.get("현재가") or data.get("current_price", 0)),
-                volume=int(data.get("거래량") or data.get("volume", 0)),
-                execution_strength=float(data.get("체결강도") or data.get("execution_strength", 0)),
-                high_price=float(data.get("고가") or data.get("high_price", 0)),
-                low_price=float(data.get("저가") or data.get("low_price", 0)),
-                open_price=float(data.get("시가") or data.get("open_price", 0)),
-                prev_close=float(data.get("전일종가") or data.get("prev_close", 0)),
+                code=stock_code,
+                current_price=current_price,
+                volume=volume,
+                execution_strength=execution_strength,
+                high_price=high_price,
+                low_price=low_price,
+                open_price=open_price,
+                prev_close=prev_close,
                 timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
             )
+            
+            # 실시간 데이터 로깅 (디버그 레벨)
+            logger.debug(f"실시간 데이터 수신: {stock_code} - 현재가: {current_price:,}원, 거래량: {volume:,}, 체결강도: {execution_strength:.2f}")
+            
+            # 익절/손절 조건 체크 (보유 종목인 경우)
+            if self.order_manager:
+                await self.order_manager.check_profit_loss(stock_data)
             
             # 모멘텀 분석
             is_signal, results = self.momentum_analyzer.is_trading_signal(stock_data)
             
-            if is_signal and self.on_trading_signal_callback:
-                await self.on_trading_signal_callback(stock_data, results)
+            if is_signal:
+                logger.info(f"🚨 매매 신호 감지: {stock_code}")
+                logger.info(f"   현재가: {current_price:,}원")
+                logger.info(f"   거래량: {volume:,}")
+                logger.info(f"   체결강도: {execution_strength:.2f}")
+                
+                # 조건별 상세 정보 로깅
+                for condition_name, result in results.items():
+                    if result.is_satisfied:
+                        logger.info(f"   ✅ {result.description}: {result.current_value:.3f} >= {result.threshold}")
+                
+                # 주문 매니저를 통한 자동 주문 실행
+                if self.order_manager:
+                    try:
+                        order = await self.order_manager.handle_trading_signal(stock_data, results)
+                        if order:
+                            logger.info(f"💰 자동 주문 실행 완료: {stock_code} - {order.order_type.value} {order.quantity}주")
+                        else:
+                            logger.info(f"⚠️ 자동 주문 실행 실패 또는 조건 불만족: {stock_code}")
+                    except Exception as e:
+                        logger.error(f"자동 주문 실행 중 오류: {e}")
+                
+                # 트레이딩 신호 콜백 호출
+                if self.on_trading_signal_callback:
+                    await self.on_trading_signal_callback(stock_data, results)
             
-            # 조건 요약 로깅 (디버그 레벨)
-            summary = self.momentum_analyzer.get_condition_summary(stock_data.code)
-            logger.debug(f"조건 분석 결과: {summary}")
+            # 조건 요약 로깅 (주기적으로)
+            if stock_code in self.registered_stocks and len(self.registered_stocks) % 10 == 0:  # 10개 종목마다
+                summary = self.momentum_analyzer.get_condition_summary(stock_code)
+                if summary:
+                    logger.debug(f"조건 분석 요약 - {stock_code}: {summary}")
             
         except Exception as e:
             logger.error(f"주식 데이터 처리 실패: {e}")
+            logger.error(f"원본 데이터: {data}")
     
     async def _handle_message(self, message: str):
         """메시지 처리 (키움 API 형식)"""
@@ -230,18 +299,36 @@ class WebSocketClient:
             # 키움 API 메시지 타입별 핸들러 호출
             if trnm in self.message_handlers:
                 await self.message_handlers[trnm](data)
-            elif trnm == "STOCK_DATA":
+            elif trnm == "LOGIN":
+                if data.get("return_code") == 0:
+                    logger.info("로그인 성공")
+                else:
+                    logger.error(f"로그인 실패: {data.get('return_msg')}")
+                    await self.disconnect()
+            elif trnm == "PING":
+                # PING에 대한 PONG 응답
+                await self.websocket.send(json.dumps(data))
+                logger.debug("PING-PONG 응답")
+            elif trnm == "REG":
+                if data.get("return_code") == 0:
+                    logger.info("실시간 등록 성공")
+                else:
+                    logger.error(f"실시간 등록 실패: {data.get('return_msg')}")
+            elif trnm == "STOCK_DATA" or trnm == "체결" or trnm == "호가":
+                # 실시간 주식 데이터 처리
                 await self._handle_stock_data(data)
             elif trnm == "HEARTBEAT":
                 logger.debug("하트비트 수신")
             elif trnm == "ERROR":
                 logger.error(f"서버 에러: {data.get('message', 'Unknown error')}")
-            elif trnm == "LOGIN_RESPONSE":
-                logger.info("로그인 응답 수신")
-            elif trnm == "LOGIN":
-                logger.info("로그인 메시지 수신")
             else:
-                logger.warning(f"알 수 없는 메시지 타입: {trnm}")
+                # 알 수 없는 메시지 타입이지만 실시간 데이터일 가능성
+                if any(key in data for key in ["종목코드", "stock_code", "현재가", "current_price"]):
+                    logger.debug(f"실시간 데이터로 추정되는 메시지: {trnm}")
+                    await self._handle_stock_data(data)
+                else:
+                    logger.warning(f"알 수 없는 메시지 타입: {trnm}")
+                    logger.debug(f"메시지 내용: {data}")
                 
         except json.JSONDecodeError as e:
             logger.error(f"JSON 파싱 실패: {e}")
@@ -295,23 +382,94 @@ class WebSocketClient:
     
     async def run(self, stock_codes: List[str] = None):
         """웹소켓 클라이언트 실행"""
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"웹소켓 클라이언트 실행 시도 {retry_count + 1}/{max_retries}")
+                
+                await self.connect()
+                
+                # 로그인 응답을 기다린 후 주식 등록
+                login_success = await self._wait_for_login_response()
+                if not login_success:
+                    logger.error("로그인 실패")
+                    break
+                
+                # 주식 등록
+                if stock_codes:
+                    for stock_code in stock_codes:
+                        await self.register_stock(stock_code)
+                
+                # 메시지 수신 시작
+                await self.listen()
+                
+                # 정상적으로 종료된 경우 루프 탈출
+                break
+                
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"웹소켓 클라이언트 실행 실패 (시도 {retry_count}/{max_retries}): {e}")
+                
+                if self.on_error_callback:
+                    await self.on_error_callback(e)
+                
+                if retry_count < max_retries:
+                    wait_time = retry_count * 5  # 점진적으로 대기 시간 증가
+                    logger.info(f"{wait_time}초 후 재시도합니다...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error("최대 재시도 횟수 초과. 웹소켓 클라이언트를 종료합니다.")
+                    break
+            finally:
+                await self.disconnect()
+    
+    async def _wait_for_login_response(self, timeout: int = 10) -> bool:
+        """로그인 응답을 기다림"""
         try:
-            await self.connect()
+            start_time = asyncio.get_event_loop().time()
             
-            # 주식 등록
-            if stock_codes:
-                for stock_code in stock_codes:
-                    await self.register_stock(stock_code)
+            while asyncio.get_event_loop().time() - start_time < timeout:
+                if not self.websocket:
+                    return False
+                
+                try:
+                    # 타임아웃을 짧게 설정하여 응답 대기
+                    message = await asyncio.wait_for(
+                        self.websocket.recv(),
+                        timeout=1.0
+                    )
+                    
+                    data = json.loads(message)
+                    trnm = data.get("trnm")
+                    
+                    if trnm == "LOGIN":
+                        if data.get("return_code") == 0:
+                            logger.info("로그인 성공 확인")
+                            return True
+                        else:
+                            logger.error(f"로그인 실패: {data.get('return_msg')}")
+                            return False
+                    elif trnm == "PING":
+                        # PING에 대한 PONG 응답
+                        await self.websocket.send(json.dumps(data))
+                        logger.debug("PING-PONG 응답")
+                    else:
+                        logger.debug(f"로그인 대기 중 다른 메시지 수신: {trnm}")
+                        
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    logger.error(f"로그인 응답 대기 중 오류: {e}")
+                    return False
             
-            # 메시지 수신 시작
-            await self.listen()
+            logger.error("로그인 응답 타임아웃")
+            return False
             
         except Exception as e:
-            logger.error(f"웹소켓 클라이언트 실행 실패: {e}")
-            if self.on_error_callback:
-                await self.on_error_callback(e)
-        finally:
-            await self.disconnect()
+            logger.error(f"로그인 응답 대기 실패: {e}")
+            return False
     
     def get_status(self) -> Dict[str, Any]:
         """현재 상태 반환"""

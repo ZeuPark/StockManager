@@ -23,7 +23,7 @@ except ImportError:
 class Settings:
     """Central configuration management for Stock Manager"""
     
-    def __init__(self, config_path: str = "config/secrets.json"):
+    def __init__(self, config_path: str = "config/keys.json"):
         self.config_path = Path(config_path)
         self.logger = get_logger("settings")
         
@@ -36,20 +36,20 @@ class Settings:
         # Kiwoom REST API settings
         self.KIWOOM_API = {
             "simulation": {
-                "host": "https://mockapi.kiwoom.com",
+                "host": "https://openapi.kiwoom.com",  # 실제 모의투자 API
                 "appkey": self.secrets.get("simulation", {}).get("appkey"),
                 "secretkey": self.secrets.get("simulation", {}).get("secretkey"),
                 "token": self.secrets.get("simulation", {}).get("token")
             },
             "production": {
-                "host": "https://api.kiwoom.com",
+                "host": "https://openapi.kiwoom.com",  # 실제 거래 API
                 "appkey": self.secrets.get("production", {}).get("appkey"),
                 "secretkey": self.secrets.get("production", {}).get("secretkey"),
                 "token": self.secrets.get("production", {}).get("token")
             }
         }
         
-        # API endpoints
+        # API endpoints (실제 Kiwoom Open API 엔드포인트)
         self.API_ENDPOINTS = {
             "token": "/oauth2/token",
             "account_info": "/uapi/domestic-stock/v1/trading/inquire-balance",
@@ -59,7 +59,26 @@ class Settings:
             "execution": "/uapi/domestic-stock/v1/trading/inquire-execution",
             "daily_chart": "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
             "minute_chart": "/uapi/domestic-stock/v1/quotations/inquire-time-series",
-            "market_data": "/uapi/domestic-stock/v1/quotations/inquire-price"
+            "market_data": "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "real_time": "/uapi/domestic-stock/v1/quotations/inquire-price"
+        }
+        
+        # TR IDs for different environments (모의투자 vs 실제거래)
+        self.TR_IDS = {
+            "simulation": {
+                "account_info": "TTTC8434R",  # 모의투자 계좌 조회
+                "order": "VTTC0802U",  # 모의투자 주식 주문
+                "order_status": "TTTC8001R",  # 모의투자 주문 조회
+                "execution": "TTTC8001R",  # 모의투자 체결 조회
+                "balance": "TTTC8434R"  # 모의투자 잔고 조회
+            },
+            "production": {
+                "account_info": "TTTC8434R",  # 실제거래 계좌 조회
+                "order": "TTTC0802U",  # 실제거래 주식 주문
+                "order_status": "TTTC8001R",  # 실제거래 주문 조회
+                "execution": "TTTC8001R",  # 실제거래 체결 조회
+                "balance": "TTTC8434R"  # 실제거래 잔고 조회
+            }
         }
         
         # Trading strategy parameters
@@ -92,6 +111,18 @@ class Settings:
                 "breakout_ticks": 3,  # 3틱 최고가 돌파 (테스트용)
                 "rise_threshold": 0.005,  # 돌파 후 0.5% 이상 상승
                 "description": "가격 돌파 조건"
+            },
+            "price_momentum": {
+                "enabled": True,
+                "min_price_change": 0.01,  # 최소 1% 가격 변동
+                "consecutive_ticks": 2,  # 2틱 연속 상승
+                "description": "가격 모멘텀 조건"
+            },
+            "volume_price_confirmation": {
+                "enabled": True,
+                "volume_threshold": 1.5,  # 거래량 150% 이상
+                "price_threshold": 0.02,  # 가격 2% 이상 상승
+                "description": "거래량-가격 동반 상승 조건"
             }
         }
         
@@ -104,10 +135,11 @@ class Settings:
             "message_timeout": 5  # 메시지 타임아웃 (초)
         }
         
-        # WebSocket URLs
-        self.KIWOOM_WEBSOCKET_URL = "wss://mockapi.kiwoom.com:10000/api/dostk/websocket"  # 시뮬레이션용
-        if self.ENVIRONMENT == "production":
-            self.KIWOOM_WEBSOCKET_URL = "wss://api.kiwoom.com:10000/api/dostk/websocket"  # 실제 거래용
+        # WebSocket URLs (실제 키움 API 사용)
+        if self.ENVIRONMENT == "simulation":
+            self.KIWOOM_WEBSOCKET_URL = "wss://mockapi.kiwoom.com:10000/api/dostk/websocket"  # 모의투자
+        else:
+            self.KIWOOM_WEBSOCKET_URL = "wss://api.kiwoom.com:10000/api/dostk/websocket"  # 실제투자
         
         # Risk management
         self.RISK_MANAGEMENT = {
@@ -198,17 +230,20 @@ class Settings:
         host = self.KIWOOM_API[env]["host"]
         return host + self.API_ENDPOINTS.get(endpoint, endpoint)
     
-    def get_headers(self, environment: Optional[str] = None) -> Dict[str, str]:
-        """Get API headers with authentication"""
+    def get_headers(self, environment: Optional[str] = None, tr_type: str = "account_info") -> Dict[str, str]:
+        """Get API headers with authentication and TR ID"""
         env = environment or self.ENVIRONMENT
         api_config = self.get_api_config(env)
+        
+        # Get TR ID for the specific request type
+        tr_id = self.TR_IDS.get(env, {}).get(tr_type, "")
         
         headers = {
             'Content-Type': 'application/json;charset=UTF-8',
             'authorization': f'Bearer {api_config.get("token", "")}',
             'appkey': api_config.get("appkey", ""),
             'appsecret': api_config.get("secretkey", ""),
-            'tr_id': '',  # Will be set per request
+            'tr_id': tr_id,
         }
         
         return headers

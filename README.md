@@ -22,7 +22,7 @@ Stock Manager is a Python-based automated stock trading system that integrates w
 stock_manager/
 ├── main.py                      # Main trading system entry point
 ├── config/
-│   ├── secrets.json             # API keys/secrets (simulation & production)
+│   ├── keys.json                # API keys/secrets (simulation & production)
 │   └── settings.py              # Strategy parameters, momentum conditions
 ├── api/
 │   ├── api_caller.py            # REST API client for Kiwoom APIs
@@ -88,9 +88,9 @@ cd stock_manager
 
 ### 2. Configure secrets
 ```bash
-# Create secrets.json with your API keys
-cp config/secrets.json.example config/secrets.json
-# Edit config/secrets.json with your Kiwoom API credentials
+# Create keys.json with your API keys
+cp config/keys.json.example config/keys.json
+# Edit config/keys.json with your Kiwoom API credentials
 ```
 
 ### 3. Environment Setup
@@ -149,7 +149,7 @@ python tests/test_trading_signals.py
 
 ## Configuration
 
-### API Configuration (config/secrets.json)
+### API Configuration (config/keys.json)
 ```json
 {
     "simulation": {
@@ -317,7 +317,7 @@ Stock Manager는 Kiwoom API와 연동되는 Python 기반 자동화 주식 거�
 stock_manager/
 ├── main.py                      # 메인 거래 시스템 진입점
 ├── config/
-│   ├── secrets.json             # API 키/시크릿 (시뮬레이션 & 프로덕션)
+│   ├── keys.json                # API 키/시크릿 (시뮬레이션 & 프로덕션)
 │   └── settings.py              # 전략 파라미터, 모멘텀 조건
 ├── api/
 │   ├── api_caller.py            # Kiwoom API용 REST API 클라이언트
@@ -383,9 +383,9 @@ cd stock_manager
 
 ### 2. 시크릿 설정
 ```bash
-# API 키로 secrets.json 생성
-cp config/secrets.json.example config/secrets.json
-# config/secrets.json을 Kiwoom API 자격증명으로 편집
+# API 키로 keys.json 생성
+cp config/keys.json.example config/keys.json
+# config/keys.json을 Kiwoom API 자격증명으로 편집
 ```
 
 ### 3. 환경 설정
@@ -444,7 +444,7 @@ python tests/test_trading_signals.py
 
 ## 설정
 
-### API 설정 (config/secrets.json)
+### API 설정 (config/keys.json)
 ```json
 {
     "simulation": {

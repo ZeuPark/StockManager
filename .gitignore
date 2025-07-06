@@ -46,7 +46,7 @@ ehthumbs.db
 Thumbs.db
 
 # Auto Trading Specific
-config/secrets.json
+config/keys.json
 *.db
 *.sqlite
 *.sqlite3
@@ -103,4 +103,4 @@ coverage.xml
 
 
 # Secrets
-config/secrets.json
+config/keys.json
