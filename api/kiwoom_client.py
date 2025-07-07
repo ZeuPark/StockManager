@@ -161,20 +161,34 @@ class KiwoomClient:
             "sell_cancel": "04"  # 매도취소
         }
         
+        # 환경에 따른 주문 방식 결정
+        # 모의투자: 시장가 주문, 실제거래: 지정가 주문
+        if self.settings.ENVIRONMENT == "simulation":
+            # 모의투자에서는 시장가 주문
+            trde_tp = "3"  # 시장가
+            ord_uv = ""    # 시장가 주문시 단가 빈값
+            self.logger.info(f"모의투자 환경: 시장가 주문으로 실행")
+        else:
+            # 실제거래에서는 지정가 주문
+            trde_tp = "1"  # 지정가
+            ord_uv = str(price) if price > 0 else ""  # 지정가 주문시 단가 설정
+            self.logger.info(f"실제거래 환경: 지정가 주문으로 실행")
+        
         # 실제 키움증권 API 주문 파라미터
         data = {
             "dmst_stex_tp": "KRX",  # 국내거래소구분
             "stk_cd": stock_code,  # 종목코드
             "ord_qty": str(quantity),  # 주문수량
-            "ord_uv": str(price) if price > 0 else "",  # 주문단가 (시장가 주문시 빈값)
-            "trde_tp": "3" if price == 0 else "1",  # 거래구분 (3: 시장가, 1: 지정가)
+            "ord_uv": ord_uv,  # 주문단가
+            "trde_tp": trde_tp,  # 거래구분 (3: 시장가, 1: 지정가)
             "cond_uv": ""  # 조건단가
         }
         
         # API ID 설정 (매수/매도 구분)
         tr_type = "order_buy" if order_type in ["buy", "매수"] else "order_sell"
         
-        self.logger.info(f"주문 실행: {order_type} {stock_code} {quantity}주 @ {price}원")
+        order_method = "시장가" if trde_tp == "3" else "지정가"
+        self.logger.info(f"주문 실행: {order_type} {stock_code} {quantity}주 @ {price}원 ({order_method})")
         return self._make_request("POST", endpoint, data=data, tr_type=tr_type)
     
     def get_order_status(self, order_no: str = "", account_no: str = None) -> Optional[Dict]:
