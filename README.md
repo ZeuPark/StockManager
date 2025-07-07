@@ -1,6 +1,119 @@
 # Stock Manager - Automated Trading System
 
 ## Overview
+Stock Manager is a Python-based automated stock trading system. It provides real-time data analysis, automated order execution, account/system monitoring, robust logging, and database integration.
+
+## Key Features
+- **Real-time volume/momentum analysis and automated trading**
+- **Real-time account/portfolio/risk monitoring**
+- **System resource monitoring (CPU/Memory/Disk)**
+- **SQLite-based data storage/analysis/backup**
+- **Environment-specific configuration and token management**
+- **Test/production code separation with Docker support**
+
+## Project Structure
+```
+StockManager/
+├── main.py                  # Main execution/integration entry point
+├── volumetrading/
+│   ├── app.py              # Volume-based automated trading execution file
+│   └── __init__.py
+├── account/                # Account monitoring
+│   └── account_monitor.py
+├── analysis/               # Data/strategy analysis
+│   ├── volume_scanner.py
+│   ├── momentum_analyzer.py
+│   └── data_analyzer.py
+├── api/                    # API/WS integration
+│   ├── api_caller.py
+│   ├── kiwoom_client.py
+│   └── websocket_client.py
+├── orders/                 # Order/signal processing
+│   ├── order_manager.py
+│   └── signal_processor.py
+├── database/               # Database management
+│   ├── database_manager.py
+│   └── init.sql
+├── monitor/                # System monitoring
+│   └── monitoring.py
+├── config/                 # Configuration
+│   └── settings.py
+├── utils/                  # Common utilities
+│   ├── logger.py
+│   ├── token_manager.py
+│   └── __init__.py
+├── tests/                  # Test code
+│   ├── test_account_monitor.py
+│   ├── test_momentum_analyzer.py
+│   ├── test_volume_scanner.py
+│   ├── test_signal_processor.py
+│   ├── test_trading_signals.py
+│   ├── test_websocket.py
+│   └── __init__.py
+├── logs/                   # Log files
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+├── README.md
+```
+> **Note:** `examples/`, `final_reference/`, `temp_test_files/` and other example/temporary folders have been cleaned up and no longer exist.
+
+## How to Run
+
+### 1. Environment Setup
+```bash
+# Create virtual environment and install packages
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# Set environment variables (e.g., simulation)
+export ENVIRONMENT=simulation
+```
+
+### 2. Run Main System
+```bash
+python main.py
+```
+
+### 3. Run Volume-based Automated Trading
+```bash
+python volumetrading/app.py
+```
+
+### 4. Run Tests
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run individual tests
+python tests/test_account_monitor.py
+python tests/test_volume_scanner.py
+```
+
+## Key Folders/Files Description
+- **main.py**: Main system integration execution entry point
+- **volumetrading/app.py**: Volume breakout/automated trading execution
+- **account/account_monitor.py**: Account/portfolio/risk monitoring
+- **monitor/monitoring.py**: System (CPU/Memory/Disk) monitoring
+- **database/database_manager.py**: SQLite-based data storage/query/analysis
+- **analysis/**: Volume/momentum/data analysis strategies
+- **api/**: REST/WebSocket API integration
+- **orders/**: Order/signal processing
+- **config/settings.py**: Environment-specific configuration and strategy parameters
+- **utils/**: Logging, token, and other common utilities
+- **tests/**: Test code for all major features
+
+## Additional Information
+- **Docker Support**: Run all services with `docker-compose up -d`
+- **Logging/DB/Monitoring**: All major events/states are recorded in DB and logs
+- **Extension/Operation/Analysis**: Modularized by folders for easy maintenance and extension
+
+---
+
+# Stock Manager - 자동화된 주식 거래 시스템
+
+## 개요
 Stock Manager는 Python 기반의 자동 주식 트레이딩 시스템입니다. 실시간 데이터 분석, 자동 주문, 계좌/시스템 모니터링, 강력한 로깅 및 DB 연동을 제공합니다.
 
 ## 주요 기능
