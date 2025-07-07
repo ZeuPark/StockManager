@@ -148,8 +148,6 @@ class WebSocketClient:
             if self.on_disconnect_callback:
                 await self.on_disconnect_callback()
     
-
-    
     async def register_stock(self, stock_code: str):
         """주식 등록 (키움 API 형식)"""
         if not self.is_connected or not self.websocket:
@@ -178,8 +176,8 @@ class WebSocketClient:
             
             logger.info(f"주식 등록: {stock_code}")
             
-            # 등록 후 잠시 대기 (API 제한 방지)
-            await asyncio.sleep(0.1)
+            # 등록 후 대기 시간 증가 (API 제한 방지)
+            await asyncio.sleep(0.5)  # 1초 → 0.5초로 조정
             
         except Exception as e:
             logger.error(f"주식 등록 실패 ({stock_code}): {e}")
@@ -408,10 +406,21 @@ class WebSocketClient:
                     logger.error("로그인 실패")
                     break
                 
-                # 주식 등록
+                # 주식 등록 (API 제한 방지를 위해 간격 조정)
                 if stock_codes:
-                    for stock_code in stock_codes:
+                    logger.info(f"총 {len(stock_codes)}개 종목 등록 시작")
+                    for i, stock_code in enumerate(stock_codes):
                         await self.register_stock(stock_code)
+                        
+                        # 5개 종목마다 추가 대기 (API 제한 방지)
+                        if (i + 1) % 5 == 0:
+                            logger.info(f"등록 진행률: {i + 1}/{len(stock_codes)} - 2초 대기")
+                            await asyncio.sleep(2)  # 5초 → 2초로 조정
+                        else:
+                            # 개별 종목 등록 후 1초 대기
+                            await asyncio.sleep(1)  # 2초 → 1초로 조정
+                    
+                    logger.info("모든 종목 등록 완료")
                 
                 # 메시지 수신 시작
                 await self.listen()
@@ -427,7 +436,7 @@ class WebSocketClient:
                     await self.on_error_callback(e)
                 
                 if retry_count < max_retries:
-                    wait_time = retry_count * 5  # 점진적으로 대기 시간 증가
+                    wait_time = retry_count * 10  # 점진적으로 대기 시간 증가 (5초 → 10초)
                     logger.info(f"{wait_time}초 후 재시도합니다...")
                     await asyncio.sleep(wait_time)
                 else:

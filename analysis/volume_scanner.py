@@ -46,11 +46,15 @@ class VolumeScanner:
         self.settings = settings
         self.token_manager = token_manager
         self.candidates: List[VolumeCandidate] = []
-        self.processed_stocks: set = set()
+        self.processed_stocks: set = set()  # 한번 처리된 종목들 (하루 단위로 초기화)
         
         # 실시간 전일 거래량 돌파 감지를 위한 관리
-        self.breakout_stocks: set = set()  # 이미 돌파한 종목들
+        self.breakout_stocks: set = set()  # 이미 돌파한 종목들 (하루 단위로 초기화)
         self.volume_breakout_candidates: List[Dict] = []  # 돌파 후보 종목들
+        
+        # 새로운 돌파 감지를 위한 시간 기반 관리
+        self.last_breakout_check: Dict[str, datetime] = {}  # 종목별 마지막 돌파 체크 시간
+        self.breakout_cooldown = 300  # 돌파 감지 후 5분간 대기
         
         # API Rate Limiting
         self.API_RATE_LIMIT = 2  # 초당 2건으로 제한
@@ -60,10 +64,11 @@ class VolumeScanner:
         
         # 스캐닝 설정 (실제 거래 조건) - 매수 조건 완화
         self.scan_interval = getattr(settings, 'VOLUME_SCANNING', {}).get('scan_interval', 120)
-        self.min_volume_ratio = 1.0  # 오늘 누적 거래량 ≥ 전일 총 거래량
-        self.min_trade_value = 50_000_000  # 1분 거래대금 ≥ 5천만원 (완화)
-        self.min_price_change = 0.01  # 등락률 ≥ +1% (완화)
-        self.min_execution_strength = 1.1  # 체결강도 ≥ 110% (완화)
+        self.min_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('min_volume_ratio', 1.0)
+        self.max_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('max_volume_ratio', 2.0)
+        self.min_trade_value = getattr(settings, 'VOLUME_SCANNING', {}).get('min_trade_value', 50_000_000)
+        self.min_price_change = getattr(settings, 'VOLUME_SCANNING', {}).get('min_price_change', 0.01)
+        self.min_execution_strength = getattr(settings, 'VOLUME_SCANNING', {}).get('min_execution_strength', 1.1)
         
         # 자동매매 설정
         self.auto_trade_enabled = False
@@ -320,15 +325,33 @@ class VolumeScanner:
                     if not is_breakout:
                         continue  # 돌파하지 않은 종목은 스킵
                     
+                    # 🚨 거래량 상한선 체크 (극단적 급증 제외)
+                    if volume_ratio > self.max_volume_ratio:
+                        logger.info(f"[{stock_name}({stock_code})] 거래량 상한선 초과 - 거래량비율: {volume_ratio:.1f}% (상한선: {self.max_volume_ratio:.1f}%)")
+                        continue  # 너무 극단적인 거래량 급증은 제외
+                    
                     # 2차 필터: 추가 조건 체크 (등락률, 거래대금 등)
                     if (price_change < self.min_price_change or 
                         trade_value < self.min_trade_value):
                         logger.info(f"[{stock_name}({stock_code})] 2차 필터 탈락 - 등락률: {price_change:.2f}%, 거래대금: {trade_value:,}원")
                         continue
                     
-                    # 이미 처리된 종목 스킵
+                    # 이미 처리된 종목인지 확인 (쿨다운 기간 체크)
                     if stock_code in self.processed_stocks:
-                        continue
+                        last_check = self.last_breakout_check.get(stock_code)
+                        if last_check and (datetime.now() - last_check).seconds < self.breakout_cooldown:
+                            logger.debug(f"[{stock_name}({stock_code})] 쿨다운 중 - 마지막 처리: {last_check.strftime('%H:%M:%S')}")
+                            continue
+                        else:
+                            # 쿨다운이 지났으면 다시 처리 가능
+                            logger.info(f"[{stock_name}({stock_code})] 쿨다운 완료 - 재처리 시작")
+                    
+                    # 이미 보유 중인 종목은 후보에서 제외
+                    if hasattr(self, 'order_manager') and self.order_manager:
+                        current_holdings = self.order_manager.get_current_holdings()
+                        if stock_code in current_holdings:
+                            logger.info(f"[{stock_name}({stock_code})] 이미 보유 중이므로 후보에서 제외")
+                            continue
                     
                     logger.info(f"[{stock_name}({stock_code})] 1차 필터 통과 - 거래량비율: {volume_ratio:.1f}%, 거래대금: {trade_value:,}원")
                     
@@ -369,8 +392,9 @@ class VolumeScanner:
                         logger.info(f"   시가상승: {'예' if is_breakout else '아니오'}")
                         logger.info(f"   추세: {ma_trend}")
                         
-                        # 처리된 종목으로 등록
+                        # 처리된 종목으로 등록 (쿨다운 기간 적용)
                         self.processed_stocks.add(stock_code)
+                        self.last_breakout_check[stock_code] = datetime.now()
                         
                         # 데이터베이스에 자동매매 후보 저장
                         candidate_data = {
@@ -393,9 +417,17 @@ class VolumeScanner:
             
             # 후보 목록 업데이트
             self.candidates = candidates
-            
-            logger.info(f"스캔 완료: {len(candidates)}개 후보 종목 발견")
-            return candidates
+
+            # 🚨 후보 리스트에서 거래량이 200% 초과한 종목 즉시 제거
+            max_ratio = self.max_volume_ratio if hasattr(self, 'max_volume_ratio') else 200.0
+            before_count = len(self.candidates)
+            self.candidates = [c for c in self.candidates if c.volume_ratio <= max_ratio]
+            removed_count = before_count - len(self.candidates)
+            if removed_count > 0:
+                logger.info(f"[후보 리스트 정리] 거래량 200% 초과 {removed_count}개 종목 후보에서 제거 완료")
+
+            logger.info(f"스캔 완료: {len(self.candidates)}개 후보 종목 발견")
+            return self.candidates
             
         except Exception as e:
             logger.error(f"거래량 후보 스캔 실패: {e}")
@@ -459,6 +491,10 @@ class VolumeScanner:
         
         while True:
             try:
+                # 하루 단위 초기화 체크
+                if self.should_clear_daily_history():
+                    self.clear_breakout_history()
+                
                 # 거래량 후보 스캔
                 candidates = await self.scan_volume_candidates()
                 
@@ -508,15 +544,23 @@ class VolumeScanner:
         ]
     
     def check_volume_breakout(self, stock_code: str, today_volume: int, prev_day_volume: int) -> bool:
-        """전일 거래량 돌파 감지"""
-        # 이미 돌파한 종목인지 확인
-        if stock_code in self.breakout_stocks:
-            return False
-        
+        """전일 거래량 돌파 감지 (개선된 버전)"""
         # 전일 거래량 돌파 여부 확인
         if today_volume > prev_day_volume:
+            # 이미 돌파한 종목인지 확인
+            if stock_code in self.breakout_stocks:
+                # 이미 돌파했지만 새로운 돌파 기회가 있는지 확인
+                last_breakout = self.last_breakout_check.get(stock_code)
+                if last_breakout and (datetime.now() - last_breakout).seconds < self.breakout_cooldown:
+                    return False  # 쿨다운 중이면 스킵
+                else:
+                    # 쿨다운이 지났으면 새로운 돌파로 간주
+                    logger.info(f"[RE-BREAKOUT] 새로운 돌파 감지! {stock_code} - 오늘: {today_volume:,}주, 전일: {prev_day_volume:,}주")
+            
             # 돌파 순간 감지!
             self.breakout_stocks.add(stock_code)
+            self.last_breakout_check[stock_code] = datetime.now()
+            
             logger.info(f"[BREAKOUT] 전일 거래량 돌파 감지! {stock_code} - 오늘: {today_volume:,}주, 전일: {prev_day_volume:,}주")
             
             # 데이터베이스에 돌파 이벤트 저장
@@ -547,7 +591,17 @@ class VolumeScanner:
         """돌파 이력 초기화 (새로운 거래일 시작 시)"""
         self.breakout_stocks.clear()
         self.volume_breakout_candidates.clear()
+        self.processed_stocks.clear()  # 처리된 종목 목록도 초기화
+        self.last_breakout_check.clear()  # 마지막 체크 시간도 초기화
         logger.info("전일 거래량 돌파 이력이 초기화되었습니다.")
+    
+    def should_clear_daily_history(self) -> bool:
+        """하루 단위 초기화가 필요한지 확인"""
+        # 현재 시간이 장 시작 시간(09:00) 근처인지 확인
+        now = datetime.now()
+        if now.hour == 9 and now.minute < 10:  # 09:00~09:10 사이
+            return True
+        return False
     
     def get_breakout_candidates(self) -> List[Dict]:
         """돌파 후보 종목 목록 반환"""

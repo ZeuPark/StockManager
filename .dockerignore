@@ -43,12 +43,14 @@ wheels/
 venv/
 env/
 ENV/
+.venv/
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
+temp_test_files/
 
 # Logs and data
 logs/
@@ -69,4 +71,8 @@ docker-compose.yml
 # Temporary files
 tmp/
 temp/
-*.tmp 
+*.tmp
+
+# Monitoring (removed from docker-compose)
+monitoring/
+nginx/ 

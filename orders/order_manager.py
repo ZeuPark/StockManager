@@ -635,3 +635,7 @@ class OrderManager:
                 for stock_code, pos in self.volume_positions.items()
             ]
         }
+    
+    def get_current_holdings(self) -> set:
+        """현재 보유(매수) 종목 코드 집합 반환"""
+        return set([code for code, pos in self.positions.items() if pos.quantity > 0])

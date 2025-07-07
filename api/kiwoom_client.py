@@ -99,6 +99,12 @@ class KiwoomClient:
                 result = response.json()
                 self.logger.debug(f"API 응답: {result}")
                 return result
+            elif response.status_code == 429 and retry_count < 3:
+                # API 호출 제한, 지수 백오프로 재시도
+                wait_time = (2 ** retry_count) * 10  # 10초, 20초, 40초
+                self.logger.warning(f"API 호출 제한 (429). {wait_time}초 후 재시도... (시도 {retry_count + 1}/3)")
+                time.sleep(wait_time)
+                return self._make_request(method, endpoint, params, data, retry_count + 1, tr_type)
             elif response.status_code == 401 and retry_count < 2:
                 # 토큰 만료, 갱신 시도
                 self.logger.info("토큰이 만료되었습니다. 토큰을 갱신합니다...")

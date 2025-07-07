@@ -150,12 +150,13 @@ class Settings:
         # Volume scanning conditions (실제 거래 조건)
         self.VOLUME_SCANNING = {
             "enabled": True,
-            "scan_interval": 5,  # 스캔 간격 (초)
+            "scan_interval": 30,  # 스캔 간격 (30초로 단축 - 빠른 신호 감지)
             "min_volume_ratio": 1.0,  # 오늘 누적 거래량 ≥ 전일 총 거래량
+            "max_volume_ratio": 2.0,  # 거래량 상한선: 전일 대비 200% 이하
             "min_trade_value": 100_000_000,  # 1분 거래대금 ≥ 1억원
             "min_price_change": 0.02,  # 등락률 ≥ +2%
             "min_execution_strength": 1.1,  # 체결강도 ≥ 110%
-            "max_candidates": 10,  # 최대 후보 종목 수
+            "max_candidates": 5,  # 최대 후보 종목 수 (3개 → 5개로 조정)
             "auto_trade_enabled": True,  # 자동매매 활성화 여부
             "max_hold_time": 3600  # 최대 보유 시간 (1시간)
         }
@@ -163,9 +164,9 @@ class Settings:
         # Sell parameters (매도 설정) - 쉽게 조정 가능
         self.SELL_SETTINGS = {
             "enabled": True,  # 자동 매도 활성화
-            "monitoring_interval": 10,  # 매도 모니터링 주기 (초)
-            "stop_loss_percent": -3.0,  # 손절 기준 (-3%)
-            "take_profit_percent": 6.0,  # 익절 기준 (+6%)
+            "monitoring_interval": 30,  # 매도 모니터링 주기 (60초 → 30초로 조정)
+            "stop_loss_percent": -2.0,  # 손절 기준 (-2%로 상향)
+            "take_profit_percent": 4.0,  # 익절 기준 (+4%로 하향)
             "sell_all_on_stop_loss": True,  # 손절 시 전량 매도
             "sell_all_on_take_profit": True,  # 익절 시 전량 매도
             "min_hold_time": 300,  # 최소 보유 시간 (5분)
@@ -190,12 +191,12 @@ class Settings:
         
         # Risk management
         self.RISK_MANAGEMENT = {
-            "max_position_size": 0.1,  # 전체 자산의 10%
-            "position_size_ratio": 0.05,  # 계좌 잔고의 5%
-            "max_daily_loss": 0.05,    # 일일 최대 손실 5%
-            "stop_loss": 0.05,         # 개별 종목 손절 5%
-            "take_profit": 0.15,       # 개별 종목 익절 15%
-            "max_positions": 5,        # 최대 보유 종목 수
+            "max_position_size": 0.05,  # 전체 자산의 5% (10% → 5%)
+            "position_size_ratio": 0.02,  # 계좌 잔고의 2% (5% → 2%)
+            "max_daily_loss": 0.03,    # 일일 최대 손실 3% (5% → 3%)
+            "stop_loss": 0.02,         # 개별 종목 손절 2% (5% → 2%)
+            "take_profit": 0.04,       # 개별 종목 익절 4% (15% → 4%)
+            "max_positions": 10,       # 최대 보유 종목 수 (3개 → 10개로 증가)
             "min_trade_amount": 100000,  # 최소 거래 금액 (10만원)
             "min_position_size": 1,    # 최소 주문 수량
             "max_per_stock": 1000000   # 주식별 최대 투자 금액 (100만원)
