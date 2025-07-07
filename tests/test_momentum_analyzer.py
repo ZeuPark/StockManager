@@ -41,17 +41,29 @@ def test_momentum_analyzer():
     # 개별 조건 테스트
     print("--- 개별 조건 테스트 ---")
     
-    # 거래량 급증 조건
-    volume_result = analyzer.check_volume_spike(test_data)
-    print(f"거래량 급증: {volume_result.is_satisfied} (값: {volume_result.current_value:.3f})")
+    # 거래량 필수 조건
+    volume_result = analyzer.check_volume_requirement(test_data)
+    print(f"거래량 조건: {volume_result.is_satisfied} (값: {volume_result.current_value:.3f})")
     
     # 체결강도 조건
     strength_result = analyzer.check_execution_strength(test_data)
     print(f"체결강도: {strength_result.is_satisfied} (값: {strength_result.current_value:.3f})")
     
-    # 가격 돌파 조건
-    breakout_result = analyzer.check_price_breakout(test_data)
-    print(f"가격 돌파: {breakout_result.is_satisfied} (값: {breakout_result.current_value:.3f})")
+    # 등락률 조건
+    price_result = analyzer.check_price_change(test_data)
+    print(f"등락률: {price_result.is_satisfied} (값: {price_result.current_value:.3f})")
+    
+    # 거래대금 조건
+    trade_result = analyzer.check_trade_value(test_data)
+    print(f"거래대금: {trade_result.is_satisfied} (값: {trade_result.current_value:,.0f}원)")
+    
+    # 시가 상승 조건
+    opening_result = analyzer.check_opening_price_rise(test_data)
+    print(f"시가상승: {opening_result.is_satisfied} (값: {opening_result.current_value:,.0f}원)")
+    
+    # 시세 변동 조건
+    movement_result = analyzer.check_price_movement(test_data)
+    print(f"시세변동: {movement_result.is_satisfied} (값: {movement_result.current_value:,.0f}원)")
     
     print()
     

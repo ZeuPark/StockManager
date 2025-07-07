@@ -250,6 +250,8 @@ class WebSocketClient:
             # 익절/손절 조건 체크 (보유 종목인 경우)
             if self.order_manager:
                 await self.order_manager.check_profit_loss(stock_data)
+                # 거래량 포지션 손익 체크
+                await self.order_manager.check_volume_position_profit_loss(stock_data)
             
             # 모멘텀 분석
             is_signal, results = self.momentum_analyzer.is_trading_signal(stock_data)

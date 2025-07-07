@@ -5,6 +5,7 @@ Stock Manager is a Python-based automated stock trading system that integrates w
 
 ## Features
 - **Real-time market data collection**: WebSocket-based real-time data processing with Kiwoom APIs
+- **Volume surge scanning**: Real-time detection of stocks with sudden volume increases across all listed stocks
 - **Momentum-based trading signals**: Volume spikes, execution strength, price breakout analysis
 - **Multi-environment support**: Simulation and production modes with separate configurations
 - **Object-oriented design**: Modular, extensible, and maintainable architecture
@@ -21,6 +22,7 @@ Stock Manager is a Python-based automated stock trading system that integrates w
 ```
 stock_manager/
 ├── main.py                      # Main trading system entry point
+├── volume_trading.py            # Volume surge trading system
 ├── config/
 │   ├── keys.json                # API keys/secrets (simulation & production)
 │   └── settings.py              # Strategy parameters, momentum conditions
@@ -29,6 +31,7 @@ stock_manager/
 │   └── websocket_client.py      # WebSocket client for real-time data
 ├── analysis/
 │   ├── momentum_analyzer.py     # Momentum condition analyzer
+│   ├── volume_scanner.py        # Volume surge scanner
 │   └── data_analyzer.py         # Data analysis utilities
 ├── orders/
 │   ├── order_manager.py         # Order execution and management
@@ -126,6 +129,14 @@ export ENVIRONMENT=production
 python main.py
 ```
 
+#### Volume Surge Trading Mode
+```bash
+# Run volume surge scanning and auto-trading
+python volume_trading.py
+
+# This will scan all stocks for volume surges and execute trades automatically
+```
+
 #### Docker Deployment
 ```bash
 # Run with Docker Compose
@@ -147,9 +158,30 @@ python tests/test_trading_signals.py
 python tests/test_trading_signals.py
 ```
 
-## Configuration
+## Volume Surge Scanning
 
-### API Configuration (config/keys.json)
+The system now includes a powerful volume surge scanning feature that:
+
+1. **Real-time Scanning**: Continuously monitors all listed stocks for volume surges
+2. **Multi-level Filtering**: 
+   - 1st filter: Volume ratio, price change, trade value
+   - 2nd filter: Technical analysis score based on moving averages and chart patterns
+3. **Automatic Trading**: Executes buy orders when conditions are met
+4. **Risk Management**: Implements stop-loss, take-profit, and time-based exit strategies
+
+### Volume Scanning Criteria
+- **Volume Ratio**: Minimum 200% increase in trading volume
+- **Trade Value**: Minimum 50M KRW in 1-minute trading value
+- **Chart Score**: Minimum 5 points based on technical analysis
+- **Price Trend**: Must be in upward trend with positive price change
+
+### Auto-Trading Features
+- **Smart Entry**: Only trades stocks that meet all criteria
+- **Position Management**: Separate tracking for volume-based positions
+- **Exit Strategy**: Automatic exit based on profit/loss targets or time limits
+- **Risk Control**: Limits on position size and daily exposure
+
+## Configuration
 ```json
 {
     "simulation": {
@@ -198,6 +230,21 @@ RISK_MANAGEMENT = {
     "max_positions": 5,  # Maximum 5 positions
     "min_trade_amount": 100000,  # Minimum 100,000 KRW
     "min_position_size": 1,  # Minimum 1 share
+}
+
+# Volume scanning conditions
+VOLUME_SCANNING = {
+    "enabled": True,
+    "scan_interval": 5,  # Scan interval (seconds)
+    "min_volume_ratio": 2.0,  # Minimum volume ratio (200%)
+    "min_trade_value": 50_000_000,  # Minimum trade value (50M KRW)
+    "min_score": 5,  # Minimum chart score
+    "max_candidates": 10,  # Maximum candidate stocks
+    "auto_trade_enabled": True,  # Auto-trading enabled
+    "stop_loss": 0.05,  # Stop loss (5%)
+    "take_profit": 0.15,  # Take profit (15%)
+    "max_hold_time": 3600  # Maximum hold time (1 hour)
+}
     "max_per_stock": 1000000  # Maximum 1M KRW per stock
 }
 

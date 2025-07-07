@@ -32,7 +32,7 @@ class TokenManager:
         
         # API endpoints
         self.PRODUCTION_HOST = 'https://openapi.kiwoom.com'
-        self.SIMULATION_HOST = 'https://openapi.kiwoom.com'
+        self.SIMULATION_HOST = 'https://mockapi.kiwoom.com'
         
     def load_secrets(self) -> Dict:
         """Load secrets from config file"""
@@ -57,64 +57,47 @@ class TokenManager:
             raise
     
     def get_access_token(self, appkey: str, secretkey: str, is_simulation: bool = True) -> Optional[str]:
-        """Get access token from Kiwoom API"""
-        host = self.SIMULATION_HOST if is_simulation else self.PRODUCTION_HOST
+        """Get access token from Kiwoom API (실전/모의 REST 모두 지원)"""
+        if is_simulation:
+            host = 'https://mockapi.kiwoom.com'
+        else:
+            host = 'https://api.kiwoom.com'
+
         endpoint = '/oauth2/token'
         url = host + endpoint
-        
+
         headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
         }
-        
         data = {
             'grant_type': 'client_credentials',
             'appkey': appkey,
             'secretkey': secretkey,
         }
-        
+
         try:
-            self.logger.info(f"Requesting token from: {host}")
-            response = requests.post(url, headers=headers, data=data)
-            
+            self.logger.info(f"Requesting token from: {url}")
+            response = requests.post(url, headers=headers, json=data)
             self.logger.info(f"Token request status: {response.status_code}")
             self.logger.debug(f"Response content: {response.text}")
-            
+
             if response.status_code == 200:
-                data = response.json()
-                
-                # Check for different possible token field names
-                token = None
-                if 'token' in data:
-                    token = data['token']
-                elif 'access_token' in data:
-                    token = data['access_token']
-                elif 'accessToken' in data:
-                    token = data['accessToken']
-                elif 'result' in data and isinstance(data['result'], dict):
-                    # Some APIs wrap the token in a 'result' field
-                    result = data['result']
-                    if 'token' in result:
-                        token = result['token']
-                    elif 'access_token' in result:
-                        token = result['access_token']
-                
-                if token:
+                try:
+                    token = response.json()['token']
                     self.logger.info("Token received successfully")
                     return token
-                else:
-                    self.logger.error("Response does not contain token field")
-                    self.logger.error(f"Available fields: {list(data.keys())}")
+                except (KeyError, ValueError):
+                    self.logger.error("응답에 'token'이 없습니다. 위의 응답 내용을 확인하세요.")
                     return None
             else:
                 self.logger.error(f"Token request failed: {response.status_code}")
                 self.logger.error(f"Response: {response.text}")
                 return None
-                
         except requests.RequestException as e:
             self.logger.error(f"Network error during token request: {e}")
             return None
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Invalid JSON response: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
             return None
     
     def refresh_token(self, environment: str = "simulation") -> bool:

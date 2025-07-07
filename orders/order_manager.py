@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from analysis.momentum_analyzer import StockData, ConditionResult
+from analysis.volume_scanner import VolumeCandidate
 from api.kiwoom_client import KiwoomClient
 from config.settings import Settings
 
@@ -78,7 +79,16 @@ class OrderManager:
         self.auto_execute = settings.SYSTEM.get("auto_execute_orders", False)
         self.min_confidence = settings.SYSTEM.get("min_confidence", 0.7)
         
-        logger.info(f"OrderManager 초기화 완료 (자동매매: {self.auto_execute})")
+        # 거래량 스캐닝 자동매매 설정
+        self.volume_auto_trade = settings.VOLUME_SCANNING.get("auto_trade_enabled", False)
+        self.volume_stop_loss = settings.VOLUME_SCANNING.get("stop_loss", 0.05)
+        self.volume_take_profit = settings.VOLUME_SCANNING.get("take_profit", 0.15)
+        self.volume_max_hold_time = settings.VOLUME_SCANNING.get("max_hold_time", 3600)
+        
+        # 거래량 스캐닝 포지션 관리
+        self.volume_positions: Dict[str, Dict] = {}
+        
+        logger.info(f"OrderManager 초기화 완료 (자동매매: {self.auto_execute}, 거래량자동매매: {self.volume_auto_trade})")
     
     def calculate_order_quantity(self, stock_code: str, current_price: float) -> int:
         """주문 수량 계산 (리스크 관리)"""
@@ -418,3 +428,164 @@ class OrderManager:
                 })
         
         return summary
+    
+    async def handle_volume_candidate(self, candidate: VolumeCandidate) -> Optional[Order]:
+        """거래량 급증 후보 종목 처리"""
+        try:
+            if not self.volume_auto_trade:
+                logger.info(f"거래량 자동매매 비활성화 - 후보 무시: {candidate.stock_code}")
+                return None
+            
+            stock_code = candidate.stock_code
+            current_price = candidate.current_price
+            
+            # 이미 보유 중인 종목인지 체크
+            if stock_code in self.volume_positions:
+                logger.info(f"이미 거래량 포지션 보유 중: {stock_code}")
+                return None
+            
+            # 주문 수량 계산
+            quantity = self.calculate_order_quantity(stock_code, current_price)
+            if quantity <= 0:
+                return None
+            
+            # 리스크 한도 체크
+            if not self.check_risk_limits(stock_code, OrderType.BUY, quantity, current_price):
+                return None
+            
+            # 매수 주문 실행
+            logger.info(f"거래량 급증 매수 주문: {stock_code} - {quantity}주 @ {current_price:,}원")
+            logger.info(f"  거래량비율: {candidate.volume_ratio:.1f}%, 점수: {candidate.score}점")
+            
+            order_result = await self.kiwoom_client.place_order(
+                stock_code=stock_code,
+                order_type="매수",
+                quantity=quantity,
+                price=current_price
+            )
+            
+            if order_result and order_result.get("success"):
+                # 주문 정보 저장
+                order = Order(
+                    order_id=order_result.get("order_id", f"VOL_ORDER_{datetime.now().timestamp()}"),
+                    stock_code=stock_code,
+                    order_type=OrderType.BUY,
+                    quantity=quantity,
+                    price=current_price,
+                    order_time=datetime.now()
+                )
+                
+                self.orders[stock_code] = order
+                self.daily_trades += 1
+                
+                # 거래량 포지션 정보 저장
+                self.volume_positions[stock_code] = {
+                    'buy_price': current_price,
+                    'quantity': quantity,
+                    'buy_time': datetime.now(),
+                    'candidate_info': {
+                        'volume_ratio': candidate.volume_ratio,
+                        'score': candidate.score,
+                        'is_breakout': candidate.is_breakout,
+                        'ma_trend': candidate.ma_trend
+                    }
+                }
+                
+                logger.info(f"거래량 급증 매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
+                return order
+            else:
+                logger.error(f"거래량 급증 매수 주문 실패: {stock_code} - {order_result}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"거래량 후보 처리 실패: {e}")
+            return None
+    
+    async def check_volume_position_profit_loss(self, stock_data: StockData):
+        """거래량 포지션 손익 체크"""
+        try:
+            stock_code = stock_data.code
+            current_price = stock_data.current_price
+            
+            if stock_code not in self.volume_positions:
+                return
+            
+            position = self.volume_positions[stock_code]
+            buy_price = position['buy_price']
+            buy_time = position['buy_time']
+            
+            # 수익률 계산
+            profit_rate = (current_price - buy_price) / buy_price
+            
+            # 보유 시간 계산
+            hold_time = (datetime.now() - buy_time).total_seconds()
+            
+            # 손절 체크
+            if profit_rate <= -self.volume_stop_loss:
+                await self._close_volume_position(stock_code, current_price, "손절")
+                return
+            
+            # 익절 체크
+            if profit_rate >= self.volume_take_profit:
+                await self._close_volume_position(stock_code, current_price, "익절")
+                return
+            
+            # 최대 보유 시간 체크
+            if hold_time >= self.volume_max_hold_time:
+                await self._close_volume_position(stock_code, current_price, "시간초과")
+                return
+                
+        except Exception as e:
+            logger.error(f"거래량 포지션 손익 체크 실패: {e}")
+    
+    async def _close_volume_position(self, stock_code: str, sell_price: float, reason: str):
+        """거래량 포지션 종료"""
+        try:
+            position = self.volume_positions[stock_code]
+            quantity = position['quantity']
+            
+            logger.info(f"거래량 포지션 종료: {stock_code} - {reason}")
+            logger.info(f"  매수가: {position['buy_price']:,}원, 매도가: {sell_price:,}원")
+            
+            # 매도 주문 실행
+            order_result = await self.kiwoom_client.place_order(
+                stock_code=stock_code,
+                order_type="매도",
+                quantity=quantity,
+                price=sell_price
+            )
+            
+            if order_result and order_result.get("success"):
+                # 수익률 계산
+                buy_price = position['buy_price']
+                profit_rate = (sell_price - buy_price) / buy_price * 100
+                
+                logger.info(f"거래량 포지션 매도 성공: {stock_code} - 수익률: {profit_rate:.2f}%")
+                
+                # 포지션 제거
+                del self.volume_positions[stock_code]
+                
+                # 일일 손익 업데이트
+                self.daily_pnl += profit_rate
+                
+            else:
+                logger.error(f"거래량 포지션 매도 실패: {stock_code}")
+                
+        except Exception as e:
+            logger.error(f"거래량 포지션 종료 실패: {e}")
+    
+    def get_volume_positions_summary(self) -> Dict[str, Any]:
+        """거래량 포지션 요약 반환"""
+        return {
+            "total_volume_positions": len(self.volume_positions),
+            "volume_positions": [
+                {
+                    "stock_code": stock_code,
+                    "buy_price": pos['buy_price'],
+                    "quantity": pos['quantity'],
+                    "buy_time": pos['buy_time'].isoformat(),
+                    "candidate_info": pos['candidate_info']
+                }
+                for stock_code, pos in self.volume_positions.items()
+            ]
+        }

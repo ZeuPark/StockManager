@@ -60,7 +60,9 @@ class Settings:
             "daily_chart": "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
             "minute_chart": "/uapi/domestic-stock/v1/quotations/inquire-time-series",
             "market_data": "/uapi/domestic-stock/v1/quotations/inquire-price",
-            "real_time": "/uapi/domestic-stock/v1/quotations/inquire-price"
+            "real_time": "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "volume_ranking": "/api/dostk/rkinfo",  # 거래량 급증 종목 조회
+            "volume_chart": "/api/dostk/chart"      # 일봉 차트 조회
         }
         
         # TR IDs for different environments (모의투자 vs 실제거래)
@@ -70,14 +72,18 @@ class Settings:
                 "order": "VTTC0802U",  # 모의투자 주식 주문
                 "order_status": "TTTC8001R",  # 모의투자 주문 조회
                 "execution": "TTTC8001R",  # 모의투자 체결 조회
-                "balance": "TTTC8434R"  # 모의투자 잔고 조회
+                "balance": "TTTC8434R",  # 모의투자 잔고 조회
+                "volume_ranking": "ka10023",  # 거래량 급증 종목 조회
+                "daily_chart": "ka10081"      # 일봉 차트 조회
             },
             "production": {
                 "account_info": "TTTC8434R",  # 실제거래 계좌 조회
                 "order": "TTTC0802U",  # 실제거래 주식 주문
                 "order_status": "TTTC8001R",  # 실제거래 주문 조회
                 "execution": "TTTC8001R",  # 실제거래 체결 조회
-                "balance": "TTTC8434R"  # 실제거래 잔고 조회
+                "balance": "TTTC8434R",  # 실제거래 잔고 조회
+                "volume_ranking": "ka10023",  # 거래량 급증 종목 조회
+                "daily_chart": "ka10081"      # 일봉 차트 조회
             }
         }
         
@@ -93,37 +99,52 @@ class Settings:
             "momentum_period": 10
         }
         
-        # Real-time momentum conditions
+        # Real-time trading conditions (실제 거래 조건)
         self.MOMENTUM_CONDITIONS = {
-            "volume_spike": {
+            "volume_requirement": {
                 "enabled": True,
-                "threshold": 1.2,  # 현재 거래량 ≥ 전일 거래량의 120%
-                "description": "거래량 급증 조건"
+                "threshold": 1.0,  # 오늘 누적 거래량 ≥ 전일 총 거래량
+                "description": "거래량 필수 조건"
             },
             "execution_strength": {
                 "enabled": True,
-                "threshold": 1.5,  # 체결강도 150%
-                "consecutive_ticks": 3,  # 3틱 연속
-                "description": "체결강도 조건"
+                "threshold": 1.2,  # 체결강도 ≥ 120%
+                "description": "매수세 우위 조건"
             },
-            "price_breakout": {
+            "price_change": {
                 "enabled": True,
-                "breakout_ticks": 3,  # 3틱 최고가 돌파 (테스트용)
-                "rise_threshold": 0.005,  # 돌파 후 0.5% 이상 상승
-                "description": "가격 돌파 조건"
+                "threshold": 0.02,  # 등락률 ≥ +2%
+                "description": "가격 상승 조건"
             },
-            "price_momentum": {
+            "trade_value": {
                 "enabled": True,
-                "min_price_change": 0.01,  # 최소 1% 가격 변동
-                "consecutive_ticks": 2,  # 2틱 연속 상승
-                "description": "가격 모멘텀 조건"
+                "threshold": 100_000_000,  # 1분 거래대금 ≥ 1억원
+                "description": "유동성 조건"
             },
-            "volume_price_confirmation": {
+            "opening_price_rise": {
                 "enabled": True,
-                "volume_threshold": 1.5,  # 거래량 150% 이상
-                "price_threshold": 0.02,  # 가격 2% 이상 상승
-                "description": "거래량-가격 동반 상승 조건"
+                "description": "시가 대비 상승 조건"
+            },
+            "price_movement": {
+                "enabled": True,
+                "min_tick_change": 1,  # 최소 호가 단위 이상 변동
+                "description": "시세 변동 조건"
             }
+        }
+        
+        # Volume scanning conditions (실제 거래 조건)
+        self.VOLUME_SCANNING = {
+            "enabled": True,
+            "scan_interval": 5,  # 스캔 간격 (초)
+            "min_volume_ratio": 1.0,  # 오늘 누적 거래량 ≥ 전일 총 거래량
+            "min_trade_value": 100_000_000,  # 1분 거래대금 ≥ 1억원
+            "min_price_change": 0.02,  # 등락률 ≥ +2%
+            "min_execution_strength": 1.2,  # 체결강도 ≥ 120%
+            "max_candidates": 10,  # 최대 후보 종목 수
+            "auto_trade_enabled": True,  # 자동매매 활성화 여부
+            "stop_loss": 0.05,  # 손절 기준 (5%)
+            "take_profit": 0.15,  # 익절 기준 (15%)
+            "max_hold_time": 3600  # 최대 보유 시간 (1시간)
         }
         
         # WebSocket settings
