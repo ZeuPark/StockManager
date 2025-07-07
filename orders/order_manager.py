@@ -19,6 +19,7 @@ from analysis.momentum_analyzer import StockData, ConditionResult
 from analysis.volume_scanner import VolumeCandidate
 from api.kiwoom_client import KiwoomClient
 from config.settings import Settings
+from database.database_manager import get_database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class OrderManager:
         self.settings = settings
         self.kiwoom_client = kiwoom_client
         self.risk_management = settings.RISK_MANAGEMENT
+        self.db_manager = get_database_manager()
         
         # 주문 및 포지션 관리
         self.orders: Dict[str, Order] = {}
@@ -80,7 +82,7 @@ class OrderManager:
         self.min_confidence = settings.SYSTEM.get("min_confidence", 0.7)
         
         # 거래량 스캐닝 자동매매 설정
-        self.volume_auto_trade = settings.VOLUME_SCANNING.get("auto_trade_enabled", False)
+        self.volume_auto_trade = settings.VOLUME_SCANNING.get("auto_trade_enabled", True)  # 기본값을 True로 변경
         self.volume_stop_loss = settings.VOLUME_SCANNING.get("stop_loss", 0.05)
         self.volume_take_profit = settings.VOLUME_SCANNING.get("take_profit", 0.15)
         self.volume_max_hold_time = settings.VOLUME_SCANNING.get("max_hold_time", 3600)
@@ -196,6 +198,17 @@ class OrderManager:
                     order_time=datetime.now()
                 )
                 
+                # DB에 주문 내역 저장
+                order_data = {
+                    'order_id': order.order_id,
+                    'order_type': 'BUY',
+                    'quantity': quantity,
+                    'price': current_price,
+                    'status': 'PENDING',
+                    'created_at': order.order_time
+                }
+                self.db_manager.save_order(stock_code, order_data)
+                
                 self.orders[stock_code] = order
                 self.daily_trades += 1
                 
@@ -241,6 +254,17 @@ class OrderManager:
                     price=price,
                     order_time=datetime.now()
                 )
+                
+                # DB에 주문 내역 저장
+                order_data = {
+                    'order_id': order.order_id,
+                    'order_type': 'SELL',
+                    'quantity': quantity,
+                    'price': price,
+                    'status': 'PENDING',
+                    'created_at': order.order_time
+                }
+                self.db_manager.save_order(stock_code, order_data)
                 
                 self.orders[stock_code] = order
                 self.daily_trades += 1
@@ -429,7 +453,7 @@ class OrderManager:
         
         return summary
     
-    async def handle_volume_candidate(self, candidate: VolumeCandidate) -> Optional[Order]:
+    def handle_volume_candidate(self, candidate: VolumeCandidate) -> Optional[Order]:
         """거래량 급증 후보 종목 처리"""
         try:
             if not self.volume_auto_trade:
@@ -457,7 +481,7 @@ class OrderManager:
             logger.info(f"거래량 급증 매수 주문: {stock_code} - {quantity}주 @ {current_price:,}원")
             logger.info(f"  거래량비율: {candidate.volume_ratio:.1f}%, 점수: {candidate.score}점")
             
-            order_result = await self.kiwoom_client.place_order(
+            order_result = self.kiwoom_client.place_order(
                 stock_code=stock_code,
                 order_type="매수",
                 quantity=quantity,
@@ -474,6 +498,17 @@ class OrderManager:
                     price=current_price,
                     order_time=datetime.now()
                 )
+                
+                # DB에 주문 내역 저장
+                order_data = {
+                    'order_id': order.order_id,
+                    'order_type': 'BUY',
+                    'quantity': quantity,
+                    'price': current_price,
+                    'status': 'PENDING',
+                    'created_at': order.order_time
+                }
+                self.db_manager.save_order(stock_code, order_data)
                 
                 self.orders[stock_code] = order
                 self.daily_trades += 1
@@ -559,6 +594,17 @@ class OrderManager:
                 # 수익률 계산
                 buy_price = position['buy_price']
                 profit_rate = (sell_price - buy_price) / buy_price * 100
+                
+                # DB에 매도 주문 내역 저장
+                order_data = {
+                    'order_id': f"VOL_SELL_{datetime.now().timestamp()}",
+                    'order_type': 'SELL',
+                    'quantity': quantity,
+                    'price': sell_price,
+                    'status': 'PENDING',
+                    'created_at': datetime.now()
+                }
+                self.db_manager.save_order(stock_code, order_data)
                 
                 logger.info(f"거래량 포지션 매도 성공: {stock_code} - 수익률: {profit_rate:.2f}%")
                 

@@ -600,6 +600,103 @@ class DatabaseManager:
             self.logger.error(f"데이터베이스 통계 조회 실패: {e}")
             return {}
 
+    # ==================== 주문 관리 ====================
+    
+    def save_order(self, stock_symbol: str, order_data: Dict) -> bool:
+        """주문(매수/매도) 내역 저장"""
+        try:
+            stock = self.get_stock(stock_symbol)
+            if not stock:
+                self.logger.error(f"종목 정보 없음: {stock_symbol}")
+                return False
+
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO orders
+                    (user_id, stock_id, order_type, quantity, price, status, created_at, filled_at, order_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    order_data.get('user_id', 1),  # 기본 admin
+                    stock['id'],
+                    order_data.get('order_type', 'BUY'),  # BUY, SELL
+                    order_data.get('quantity', 0),
+                    order_data.get('price', 0),
+                    order_data.get('status', 'PENDING'),  # PENDING, FILLED, CANCELLED, REJECTED
+                    order_data.get('created_at', datetime.now()),
+                    order_data.get('filled_at'),
+                    order_data.get('order_id')
+                ))
+                conn.commit()
+                self.logger.info(f"주문 내역 저장: {stock_symbol} - {order_data.get('order_type')} {order_data.get('quantity')}주")
+                return True
+        except Exception as e:
+            self.logger.error(f"주문 내역 저장 실패: {e}")
+            return False
+    
+    def update_order_status(self, order_id: str, status: str, filled_at: datetime = None) -> bool:
+        """주문 상태 업데이트"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                if filled_at:
+                    cursor.execute("""
+                        UPDATE orders 
+                        SET status = ?, filled_at = ? 
+                        WHERE order_id = ?
+                    """, (status, filled_at, order_id))
+                else:
+                    cursor.execute("""
+                        UPDATE orders 
+                        SET status = ? 
+                        WHERE order_id = ?
+                    """, (status, order_id))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            self.logger.error(f"주문 상태 업데이트 실패: {e}")
+            return False
+    
+    def get_orders(self, stock_symbol: str = None, user_id: int = None, days: int = 30) -> List[Dict]:
+        """주문 내역 조회"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                if stock_symbol:
+                    stock = self.get_stock(stock_symbol)
+                    if not stock:
+                        return []
+                    
+                    cursor.execute("""
+                        SELECT o.*, s.symbol, s.name 
+                        FROM orders o
+                        JOIN stocks s ON o.stock_id = s.id
+                        WHERE o.stock_id = ? AND o.created_at >= ?
+                        ORDER BY o.created_at DESC
+                    """, (stock['id'], datetime.now() - timedelta(days=days)))
+                elif user_id:
+                    cursor.execute("""
+                        SELECT o.*, s.symbol, s.name 
+                        FROM orders o
+                        JOIN stocks s ON o.stock_id = s.id
+                        WHERE o.user_id = ? AND o.created_at >= ?
+                        ORDER BY o.created_at DESC
+                    """, (user_id, datetime.now() - timedelta(days=days)))
+                else:
+                    cursor.execute("""
+                        SELECT o.*, s.symbol, s.name 
+                        FROM orders o
+                        JOIN stocks s ON o.stock_id = s.id
+                        WHERE o.created_at >= ?
+                        ORDER BY o.created_at DESC
+                    """, (datetime.now() - timedelta(days=days),))
+                
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error(f"주문 내역 조회 실패: {e}")
+            return []
+
 
 # 전역 데이터베이스 매니저 인스턴스
 _db_manager = None

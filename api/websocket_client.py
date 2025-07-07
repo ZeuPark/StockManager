@@ -156,6 +156,11 @@ class WebSocketClient:
             logger.warning(f"웹소켓이 연결되지 않아 주식 등록을 건너뜁니다: {stock_code}")
             return
         
+        # 이미 등록된 종목인지 확인
+        if stock_code in self.registered_stocks:
+            logger.debug(f"이미 등록된 종목: {stock_code}")
+            return
+        
         try:
             # 키움 API 실시간 등록 메시지 형식
             register_msg = {
@@ -172,6 +177,10 @@ class WebSocketClient:
             self.registered_stocks.append(stock_code)
             
             logger.info(f"주식 등록: {stock_code}")
+            
+            # 등록 후 잠시 대기 (API 제한 방지)
+            await asyncio.sleep(0.1)
+            
         except Exception as e:
             logger.error(f"주식 등록 실패 ({stock_code}): {e}")
             # 연결 상태 재확인

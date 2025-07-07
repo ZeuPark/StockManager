@@ -36,13 +36,13 @@ class Settings:
         # Kiwoom REST API settings
         self.KIWOOM_API = {
             "simulation": {
-                "host": "https://openapi.kiwoom.com",  # 실제 모의투자 API
+                "host": "https://mockapi.kiwoom.com",  # 모의투자 API
                 "appkey": self.secrets.get("simulation", {}).get("appkey"),
                 "secretkey": self.secrets.get("simulation", {}).get("secretkey"),
                 "token": self.secrets.get("simulation", {}).get("token")
             },
             "production": {
-                "host": "https://openapi.kiwoom.com",  # 실제 거래 API
+                "host": "https://api.kiwoom.com",  # 실제투자 API
                 "appkey": self.secrets.get("production", {}).get("appkey"),
                 "secretkey": self.secrets.get("production", {}).get("secretkey"),
                 "token": self.secrets.get("production", {}).get("token")
@@ -52,39 +52,51 @@ class Settings:
         # API Host for current environment
         self.API_HOST = self.KIWOOM_API[self.ENVIRONMENT]["host"]
         
-        # API endpoints (실제 Kiwoom Open API 엔드포인트)
+        # API endpoints (실제 Kiwoom API 엔드포인트)
         self.API_ENDPOINTS = {
             "token": "/oauth2/token",
-            "account_info": "/uapi/domestic-stock/v1/trading/inquire-balance",
-            "stock_price": "/uapi/domestic-stock/v1/quotations/inquire-price",
-            "order": "/uapi/domestic-stock/v1/trading/order-cash",
-            "order_status": "/uapi/domestic-stock/v1/trading/inquire-order",
-            "execution": "/uapi/domestic-stock/v1/trading/inquire-execution",
-            "daily_chart": "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
-            "minute_chart": "/uapi/domestic-stock/v1/quotations/inquire-time-series",
-            "market_data": "/uapi/domestic-stock/v1/quotations/inquire-price",
-            "real_time": "/uapi/domestic-stock/v1/quotations/inquire-price",
-            "volume_ranking": "/api/dostk/rkinfo",  # 거래량 급증 종목 조회
-            "volume_chart": "/api/dostk/chart"      # 일봉 차트 조회
+            "account_info": "/api/dostk/acnt",           # 계좌 정보 조회
+            "stock_price": "/api/dostk/stkinfo",         # 주식 현재가 조회
+            "order": "/api/dostk/ordr",                  # 주식 주문
+            "order_status": "/api/dostk/ordr",           # 주문 상태 조회
+            "execution": "/api/dostk/exec",              # 체결 정보 조회
+            "daily_chart": "/api/dostk/chart",           # 일봉 차트 조회
+            "minute_chart": "/api/dostk/chart",          # 분봉 차트 조회
+            "market_data": "/api/dostk/stkinfo",         # 시장 데이터
+            "real_time": "/api/dostk/stkinfo",           # 실시간 데이터
+            "volume_ranking": "/api/dostk/rkinfo",       # 거래량 급증 종목 조회
+            "volume_chart": "/api/dostk/chart",          # 거래량 차트 조회
+            "execution_strength": "/api/dostk/mrkcond"   # 체결강도 조회
+        }
+        
+        # API IDs for different endpoints (실제 키움 API ID)
+        self.API_IDS = {
+            "account_info": "kt00018",  # 계좌 평가 잔고 내역
+            "order_buy": "kt10000",     # 주식 매수 주문
+            "order_sell": "kt10001",    # 주식 매도 주문
+            "execution_strength": "ka10007",  # 시세표 성정보
+            "stock_price": "ka10007",   # 현재가 조회
+            "volume_ranking": "ka10023", # 거래량 급증 종목
+            "daily_chart": "ka10081"    # 일봉 차트
         }
         
         # TR IDs for different environments (모의투자 vs 실제거래)
         self.TR_IDS = {
             "simulation": {
-                "account_info": "TTTC8434R",  # 모의투자 계좌 조회
-                "order": "VTTC0802U",  # 모의투자 주식 주문
-                "order_status": "TTTC8001R",  # 모의투자 주문 조회
-                "execution": "TTTC8001R",  # 모의투자 체결 조회
-                "balance": "TTTC8434R",  # 모의투자 잔고 조회
+                "account_info": "kt00018",  # 모의투자 계좌 조회
+                "order": "kt10000",  # 모의투자 주식 주문
+                "order_status": "kt10000",  # 모의투자 주문 조회
+                "execution": "kt10000",  # 모의투자 체결 조회
+                "balance": "kt00018",  # 모의투자 잔고 조회
                 "volume_ranking": "ka10023",  # 거래량 급증 종목 조회
                 "daily_chart": "ka10081"      # 일봉 차트 조회
             },
             "production": {
-                "account_info": "TTTC8434R",  # 실제거래 계좌 조회
-                "order": "TTTC0802U",  # 실제거래 주식 주문
-                "order_status": "TTTC8001R",  # 실제거래 주문 조회
-                "execution": "TTTC8001R",  # 실제거래 체결 조회
-                "balance": "TTTC8434R",  # 실제거래 잔고 조회
+                "account_info": "kt00018",  # 실제거래 계좌 조회
+                "order": "kt10000",  # 실제거래 주식 주문
+                "order_status": "kt10000",  # 실제거래 주문 조회
+                "execution": "kt10000",  # 실제거래 체결 조회
+                "balance": "kt00018",  # 실제거래 잔고 조회
                 "volume_ranking": "ka10023",  # 거래량 급증 종목 조회
                 "daily_chart": "ka10081"      # 일봉 차트 조회
             }
@@ -111,7 +123,7 @@ class Settings:
             },
             "execution_strength": {
                 "enabled": True,
-                "threshold": 1.2,  # 체결강도 ≥ 120%
+                "threshold": 1.1,  # 체결강도 ≥ 110%
                 "description": "매수세 우위 조건"
             },
             "price_change": {
@@ -142,12 +154,23 @@ class Settings:
             "min_volume_ratio": 1.0,  # 오늘 누적 거래량 ≥ 전일 총 거래량
             "min_trade_value": 100_000_000,  # 1분 거래대금 ≥ 1억원
             "min_price_change": 0.02,  # 등락률 ≥ +2%
-            "min_execution_strength": 1.2,  # 체결강도 ≥ 120%
+            "min_execution_strength": 1.1,  # 체결강도 ≥ 110%
             "max_candidates": 10,  # 최대 후보 종목 수
             "auto_trade_enabled": True,  # 자동매매 활성화 여부
-            "stop_loss": 0.05,  # 손절 기준 (5%)
-            "take_profit": 0.15,  # 익절 기준 (15%)
             "max_hold_time": 3600  # 최대 보유 시간 (1시간)
+        }
+        
+        # Sell parameters (매도 설정) - 쉽게 조정 가능
+        self.SELL_SETTINGS = {
+            "enabled": True,  # 자동 매도 활성화
+            "monitoring_interval": 10,  # 매도 모니터링 주기 (초)
+            "stop_loss_percent": -3.0,  # 손절 기준 (-3%)
+            "take_profit_percent": 6.0,  # 익절 기준 (+6%)
+            "sell_all_on_stop_loss": True,  # 손절 시 전량 매도
+            "sell_all_on_take_profit": True,  # 익절 시 전량 매도
+            "min_hold_time": 300,  # 최소 보유 시간 (5분)
+            "enable_partial_sell": False,  # 부분 매도 활성화
+            "partial_sell_ratio": 0.5  # 부분 매도 비율 (50%)
         }
         
         # WebSocket settings
@@ -255,19 +278,19 @@ class Settings:
         return host + self.API_ENDPOINTS.get(endpoint, endpoint)
     
     def get_headers(self, environment: Optional[str] = None, tr_type: str = "account_info") -> Dict[str, str]:
-        """Get API headers with authentication and TR ID"""
+        """Get API headers with authentication and API ID"""
         env = environment or self.ENVIRONMENT
         api_config = self.get_api_config(env)
         
-        # Get TR ID for the specific request type
-        tr_id = self.TR_IDS.get(env, {}).get(tr_type, "")
+        # Get API ID for the specific request type
+        api_id = self.API_IDS.get(tr_type, "")
         
         headers = {
             'Content-Type': 'application/json;charset=UTF-8',
             'authorization': f'Bearer {api_config.get("token", "")}',
             'appkey': api_config.get("appkey", ""),
             'appsecret': api_config.get("secretkey", ""),
-            'tr_id': tr_id,
+            'api-id': api_id,
         }
         
         return headers

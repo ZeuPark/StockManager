@@ -20,6 +20,7 @@ from api.kiwoom_client import KiwoomClient
 from api.websocket_client import WebSocketClient
 from orders.order_manager import OrderManager
 from analysis.volume_scanner import VolumeScanner
+from monitor.sell_monitor import SellMonitor
 from utils.logger import get_logger
 
 # 로거 설정
@@ -35,6 +36,7 @@ class TradingSystem:
         self.order_manager = OrderManager(self.settings, self.kiwoom_client)
         self.websocket_client = WebSocketClient(self.settings, self.token_manager)
         self.volume_scanner = VolumeScanner(self.settings, self.token_manager)
+        self.sell_monitor = SellMonitor(self.settings, self.kiwoom_client)
         
         # 시스템 상태
         self.is_running = False
@@ -75,7 +77,7 @@ class TradingSystem:
             # 거래량 스캐너 설정
             if self.settings.VOLUME_SCANNING.get("enabled", False):
                 self.volume_scanner.auto_trade_enabled = self.settings.VOLUME_SCANNING.get("auto_trade_enabled", False)
-                self.volume_scanner.scan_interval = self.settings.VOLUME_SCANNING.get("scan_interval", 5)
+                self.volume_scanner.scan_interval = self.settings.VOLUME_SCANNING.get("scan_interval", 120)  # 120초로 증가
                 self.volume_scanner.min_volume_ratio = self.settings.VOLUME_SCANNING.get("min_volume_ratio", 2.0)
                 self.volume_scanner.min_trade_value = self.settings.VOLUME_SCANNING.get("min_trade_value", 50_000_000)
                 self.volume_scanner.min_score = self.settings.VOLUME_SCANNING.get("min_score", 5)
@@ -124,18 +126,29 @@ class TradingSystem:
             
             logger.info("트레이딩 시스템 시작")
             
-            # 거래량 스캐닝과 웹소켓 클라이언트를 동시에 실행
+            # 거래량 스캐닝, 웹소켓 클라이언트, 매도 모니터링을 동시에 실행
+            tasks = []
+            
             if self.settings.VOLUME_SCANNING.get("enabled", False):
                 # 거래량 스캐닝 태스크 시작
                 volume_task = asyncio.create_task(self.volume_scanner.start_scanning())
-                
-                # 웹소켓 클라이언트 실행 (기존 관심 종목 모니터링)
-                websocket_task = asyncio.create_task(self.websocket_client.run(self.settings.TARGET_STOCKS))
-                
-                # 두 태스크를 동시에 실행
-                await asyncio.gather(volume_task, websocket_task)
+                tasks.append(volume_task)
+            
+            # 웹소켓 클라이언트 실행 (기존 관심 종목 모니터링)
+            websocket_task = asyncio.create_task(self.websocket_client.run(self.settings.TARGET_STOCKS))
+            tasks.append(websocket_task)
+            
+            # 매도 모니터링 태스크 시작
+            if self.settings.SELL_SETTINGS.get("enabled", False):
+                sell_monitor_task = asyncio.create_task(self.sell_monitor.start_monitoring())
+                tasks.append(sell_monitor_task)
+                logger.info("매도 모니터링 활성화")
+            
+            # 모든 태스크를 동시에 실행
+            if tasks:
+                await asyncio.gather(*tasks)
             else:
-                # 기존 웹소켓 클라이언트만 실행
+                # 태스크가 없으면 웹소켓만 실행
                 await self.websocket_client.run(self.settings.TARGET_STOCKS)
             
         except Exception as e:

@@ -53,17 +53,17 @@ class VolumeScanner:
         self.volume_breakout_candidates: List[Dict] = []  # 돌파 후보 종목들
         
         # API Rate Limiting
-        self.API_RATE_LIMIT = 5  # 초당 5건
-        self.API_WINDOW = 1.0    # 1초
+        self.API_RATE_LIMIT = 2  # 초당 2건으로 제한
+        self.API_WINDOW = 2.0    # 2초
         self.api_call_timestamps = collections.deque(maxlen=self.API_RATE_LIMIT)
         self.api_rate_lock = threading.Lock()
         
-        # 스캐닝 설정 (실제 거래 조건)
-        self.scan_interval = 5  # 5초마다 스캔
+        # 스캐닝 설정 (실제 거래 조건) - 매수 조건 완화
+        self.scan_interval = getattr(settings, 'VOLUME_SCANNING', {}).get('scan_interval', 120)
         self.min_volume_ratio = 1.0  # 오늘 누적 거래량 ≥ 전일 총 거래량
-        self.min_trade_value = 100_000_000  # 1분 거래대금 ≥ 1억원
-        self.min_price_change = 0.02  # 등락률 ≥ +2%
-        self.min_execution_strength = 1.2  # 체결강도 ≥ 120%
+        self.min_trade_value = 50_000_000  # 1분 거래대금 ≥ 5천만원 (완화)
+        self.min_price_change = 0.01  # 등락률 ≥ +1% (완화)
+        self.min_execution_strength = 1.1  # 체결강도 ≥ 110% (완화)
         
         # 자동매매 설정
         self.auto_trade_enabled = False
@@ -111,7 +111,7 @@ class VolumeScanner:
             if self.settings.ENVIRONMENT == "simulation":
                 host = "https://mockapi.kiwoom.com"
             else:
-                host = "https://api.kiwoom.com"
+                host = "https://openapi.kiwoom.com"
             
             endpoint = "/api/dostk/rkinfo"
             url = host + endpoint
@@ -135,18 +135,20 @@ class VolumeScanner:
             
             self.acquire_api_rate_limit()
             
-            response = requests.post(url, headers=headers, json=data)
-            
-            if response.status_code != 200:
-                logger.error(f"거래량 순위 조회 실패: {response.status_code}")
-                return []
-            
-            result = response.json()
-            if result.get("return_code") != 0:
-                logger.error(f"API 오류: {result.get('return_msg')}")
-                return []
-            
-            return result.get("trde_qty_sdnin", [])
+            while True:
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 429:
+                    logger.warning('거래량 순위 조회 429 에러(Too Many Requests) 발생! 60초 대기 후 재시도')
+                    await asyncio.sleep(60)
+                    continue
+                if response.status_code != 200:
+                    logger.error(f"거래량 순위 조회 실패: {response.status_code}")
+                    return []
+                result = response.json()
+                if result.get("return_code") != 0:
+                    logger.error(f"API 오류: {result.get('return_msg')}")
+                    return []
+                return result.get("trde_qty_sdnin", [])
             
         except Exception as e:
             logger.error(f"거래량 순위 조회 중 오류: {e}")
@@ -244,7 +246,7 @@ class VolumeScanner:
             if self.settings.ENVIRONMENT == "simulation":
                 host = "https://mockapi.kiwoom.com"
             else:
-                host = "https://api.kiwoom.com"
+                host = "https://openapi.kiwoom.com"
             
             endpoint = "/api/dostk/mrkcond"
             url = host + endpoint
@@ -301,7 +303,7 @@ class VolumeScanner:
             for item in volume_data:
                 try:
                     # 기본 데이터 파싱
-                    stock_code = item.get("stk_cd", "")
+                    stock_code = item.get("stk_cd", "").replace("_AL", "")  # _AL 접미사 제거
                     stock_name = item.get("stk_nm", "")
                     current_price = abs(int(item.get("cur_prc", 0)))
                     volume_ratio = float(item.get("sdnin_rt", "0").replace("+", "").replace("%", ""))
@@ -466,13 +468,13 @@ class VolumeScanner:
                         # 주문 매니저를 통한 자동매매 실행
                         if hasattr(self, 'order_manager') and self.order_manager:
                             try:
-                                order = await self.order_manager.handle_volume_candidate(candidate)
+                                order = self.order_manager.handle_volume_candidate(candidate)
                                 if order:
                                     logger.info(f"거래량 급증 자동매매 실행: {candidate.stock_code}")
                                 else:
                                     logger.info(f"거래량 급증 자동매매 조건 불만족: {candidate.stock_code}")
                             except Exception as e:
-                                logger.error(f"거래량 급증 자동매매 실행 실패: {e}")
+                                logger.error(f"거래량 후보 처리 실패: {e}")
                         else:
                             # 주문 매니저가 없는 경우 기본 등록
                             self.add_auto_trade(
