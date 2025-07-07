@@ -49,6 +49,9 @@ class Settings:
             }
         }
         
+        # API Host for current environment
+        self.API_HOST = self.KIWOOM_API[self.ENVIRONMENT]["host"]
+        
         # API endpoints (실제 Kiwoom Open API 엔드포인트)
         self.API_ENDPOINTS = {
             "token": "/oauth2/token",

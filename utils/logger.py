@@ -52,7 +52,8 @@ class StockManagerLogger:
         general_handler = logging.handlers.RotatingFileHandler(
             self.log_dir / "stock_manager.log",
             maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
+            backupCount=5,
+            encoding='utf-8'  # 한글 인코딩 문제 해결
         )
         general_handler.setLevel(logging.INFO)
         general_formatter = logging.Formatter(
@@ -66,7 +67,8 @@ class StockManagerLogger:
         error_handler = logging.handlers.RotatingFileHandler(
             self.log_dir / "error.log",
             maxBytes=5*1024*1024,  # 5MB
-            backupCount=3
+            backupCount=3,
+            encoding='utf-8'  # 한글 인코딩 문제 해결
         )
         error_handler.setLevel(logging.ERROR)
         error_formatter = logging.Formatter(
@@ -81,7 +83,8 @@ class StockManagerLogger:
         trading_handler = logging.handlers.RotatingFileHandler(
             self.log_dir / "trading.log",
             maxBytes=10*1024*1024,  # 10MB
-            backupCount=10
+            backupCount=10,
+            encoding='utf-8'  # 한글 인코딩 문제 해결
         )
         trading_handler.setLevel(logging.INFO)
         trading_formatter = logging.Formatter(
@@ -96,7 +99,8 @@ class StockManagerLogger:
         debug_handler = logging.handlers.RotatingFileHandler(
             self.log_dir / "debug.log",
             maxBytes=20*1024*1024,  # 20MB
-            backupCount=3
+            backupCount=3,
+            encoding='utf-8'  # 한글 인코딩 문제 해결
         )
         debug_handler.setLevel(logging.DEBUG)
         debug_formatter = logging.Formatter(

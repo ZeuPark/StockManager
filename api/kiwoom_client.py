@@ -244,6 +244,29 @@ class KiwoomClient:
         except Exception as e:
             self.logger.error(f"연결 테스트 중 오류: {e}")
             return False
+    
+    def get_account_balance(self, account_no: str = None) -> dict:
+        """
+        계좌 잔고(가용 현금 등) 조회
+        """
+        info = self.get_account_info(account_no)
+        if not info:
+            self.logger.error("계좌 잔고 조회 실패: get_account_info 결과 없음")
+            return {"available_cash": 0}
+
+        # Kiwoom API 응답 구조에 따라 파싱 (예시)
+        try:
+            # 실제 응답 구조에 맞게 수정 필요
+            output = info.get("output", {})
+            available_cash = 0
+            if isinstance(output, dict):
+                available_cash = int(output.get("dnca_tot_amt", 0))  # 예: 가용현금 필드명
+            elif isinstance(output, list) and output:
+                available_cash = int(output[0].get("dnca_tot_amt", 0))
+            return {"available_cash": available_cash}
+        except Exception as e:
+            self.logger.error(f"계좌 잔고 파싱 실패: {e}")
+            return {"available_cash": 0}
 
 
 def main():
