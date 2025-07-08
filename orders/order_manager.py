@@ -93,7 +93,7 @@ class OrderManager:
         logger.info(f"OrderManager 초기화 완료 (자동매매: {self.auto_execute}, 거래량자동매매: {self.volume_auto_trade})")
     
     def calculate_order_quantity(self, stock_code: str, current_price: float) -> int:
-        """주문 수량 계산 (리스크 관리)"""
+        """주문 수량 계산 (리스크 관리) - 패턴 분석 기반 최적화"""
         try:
             # 계좌 잔고 조회
             balance = self.kiwoom_client.get_account_balance()
@@ -105,10 +105,16 @@ class OrderManager:
                 self.risk_management["max_per_stock"]
             )
             
-            # 최소 거래 금액 체크
+            # 최소 거래 금액 체크 (패턴 분석 기반)
             if max_investment < self.risk_management["min_trade_amount"]:
                 logger.warning(f"최소 거래 금액 부족: {max_investment:,}원 < {self.risk_management['min_trade_amount']:,}원")
                 return 0
+            
+            # 최대 거래 금액 체크 (패턴 분석 기반)
+            max_trade_amount = self.risk_management.get("max_trade_amount", float('inf'))
+            if max_investment > max_trade_amount:
+                max_investment = max_trade_amount
+                logger.info(f"최대 거래 금액으로 제한: {max_investment:,}원")
             
             # 주문 수량 계산
             quantity = int(max_investment / current_price)
@@ -118,6 +124,24 @@ class OrderManager:
                 logger.warning(f"최소 주문 수량 부족: {quantity} < {self.risk_management['min_position_size']}")
                 return 0
             
+            # 최대 보유 수량 체크 (패턴 분석 기반)
+            max_quantity = self.risk_management.get("max_quantity_per_stock", float('inf'))
+            if quantity > max_quantity:
+                quantity = max_quantity
+                logger.info(f"최대 보유 수량으로 제한: {quantity}주")
+            
+            # 현재 보유 수량 체크
+            current_position = self.positions.get(stock_code)
+            if current_position and current_position.quantity > 0:
+                total_quantity = current_position.quantity + quantity
+                if total_quantity > max_quantity:
+                    additional_quantity = max_quantity - current_position.quantity
+                    if additional_quantity <= 0:
+                        logger.warning(f"이미 최대 보유 수량 도달: {stock_code} ({current_position.quantity}주)")
+                        return 0
+                    quantity = additional_quantity
+                    logger.info(f"추가 매수 수량 제한: {quantity}주")
+            
             logger.info(f"주문 수량 계산: {stock_code} - {quantity}주 ({quantity * current_price:,}원)")
             return quantity
             
@@ -125,61 +149,28 @@ class OrderManager:
             logger.error(f"주문 수량 계산 실패: {e}")
             return 0
     
-    def check_risk_limits(self, stock_code: str, order_type: OrderType, quantity: int, price: float) -> bool:
-        """리스크 한도 체크"""
-        try:
-            # 최대 보유 종목 수 체크
-            if order_type == OrderType.BUY:
-                current_positions = len([p for p in self.positions.values() if p.quantity > 0])
-                if current_positions >= self.risk_management["max_positions"]:
-                    logger.warning(f"최대 보유 종목 수 초과: {current_positions} >= {self.risk_management['max_positions']}")
-                    return False
-            
-            # 일일 손실 한도 체크
-            if self.daily_pnl < -self.risk_management["max_daily_loss"]:
-                logger.warning(f"일일 손실 한도 초과: {self.daily_pnl:.2f}% < -{self.risk_management['max_daily_loss']:.2f}%")
-                return False
-            
-            # 동일 종목 중복 주문 체크
-            if stock_code in self.orders:
-                pending_order = self.orders[stock_code]
-                if pending_order.status in [OrderStatus.PENDING, OrderStatus.PARTIAL_FILLED]:
-                    logger.warning(f"동일 종목 주문 대기 중: {stock_code}")
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"리스크 한도 체크 실패: {e}")
-            return False
-    
     async def execute_buy_order(self, stock_data: StockData, confidence: float = 1.0) -> Optional[Order]:
-        """매수 주문 실행"""
+        """
+        매수 주문 실행 (모든 경로에서 10종목 제한 강제)
+        """
         try:
             if not self.auto_execute:
                 logger.info(f"자동매매 비활성화 - 매수 신호 무시: {stock_data.code}")
                 return None
-            
             if confidence < self.min_confidence:
                 logger.info(f"신뢰도 부족 - 매수 신호 무시: {stock_data.code} (신뢰도: {confidence:.2f})")
                 return None
-            
             stock_code = stock_data.code
             current_price = stock_data.current_price
-            
-            # 주문 수량 계산
             quantity = self.calculate_order_quantity(stock_code, current_price)
             if quantity <= 0:
                 return None
-            
-            # 리스크 한도 체크
+            # 10종목 제한 강제
             if not self.check_risk_limits(stock_code, OrderType.BUY, quantity, current_price):
+                logger.warning(f"🚫 10종목 제한! 매수 차단: {stock_code}")
                 return None
-            
-            # 주문 실행
+            # 매수 주문 실행
             logger.info(f"매수 주문 실행: {stock_code} - {quantity}주 @ {current_price:,}원")
-            
-            # 키움 API 주문 실행
             order_result = await self.kiwoom_client.place_order(
                 stock_code=stock_code,
                 order_type="매수",
@@ -187,10 +178,11 @@ class OrderManager:
                 price=current_price
             )
             
-            if order_result and order_result.get("success"):
+            # 키움 API 주문 결과 판단 (return_code: 0이 성공)
+            if order_result and order_result.get("return_code") == 0:
                 # 주문 정보 저장
                 order = Order(
-                    order_id=order_result.get("order_id", f"ORDER_{datetime.now().timestamp()}"),
+                    order_id=order_result.get("ord_no", f"ORDER_{datetime.now().timestamp()}"),
                     stock_code=stock_code,
                     order_type=OrderType.BUY,
                     quantity=quantity,
@@ -236,10 +228,10 @@ class OrderManager:
                 self.orders[stock_code] = order
                 self.daily_trades += 1
                 
-                logger.info(f"매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
+                logger.info(f"✅ 매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
                 return order
             else:
-                logger.error(f"매수 주문 실패: {stock_code} - {order_result}")
+                logger.error(f"❌ 매수 주문 실패: {stock_code} - {order_result}")
                 return None
                 
         except Exception as e:
@@ -496,32 +488,35 @@ class OrderManager:
         return summary
     
     def handle_volume_candidate(self, candidate: VolumeCandidate) -> Optional[Order]:
-        """거래량 급증 후보 종목 처리"""
+        """
+        거래량 급증 후보 종목 처리 (10종목 제한 강제)
+        """
         try:
             if not self.volume_auto_trade:
                 logger.info(f"거래량 자동매매 비활성화 - 후보 무시: {candidate.stock_code}")
                 return None
-            
             stock_code = candidate.stock_code
             current_price = candidate.current_price
-            
-            # 이미 보유 중인 종목인지 체크
+            current_positions = len([p for p in self.positions.values() if p.quantity > 0])
+            volume_positions = len(self.volume_positions)
+            total_positions = current_positions + volume_positions
+            logger.info(f"🔍 포지션 상태 체크 - {stock_code}: 일반:{current_positions}개, 거래량:{volume_positions}개, 총:{total_positions}개")
             if stock_code in self.volume_positions:
                 logger.info(f"이미 거래량 포지션 보유 중: {stock_code}")
                 return None
-            
-            # 주문 수량 계산
             quantity = self.calculate_order_quantity(stock_code, current_price)
             if quantity <= 0:
+                logger.info(f"주문 수량 부족: {stock_code} - {quantity}")
                 return None
-            
-            # 리스크 한도 체크
+            # 10종목 제한 강제
             if not self.check_risk_limits(stock_code, OrderType.BUY, quantity, current_price):
+                logger.warning(f"🚫 10종목 제한! 매수 차단: {stock_code}")
                 return None
-            
-            # 매수 주문 실행
-            logger.info(f"거래량 급증 매수 주문: {stock_code} - {quantity}주 @ {current_price:,}원")
-            logger.info(f"  거래량비율: {candidate.volume_ratio:.1f}%, 점수: {candidate.score}점")
+            logger.info(f"✅ 리스크 한도 체크 통과: {stock_code} - 매수 진행")
+            # 매수 주문 실행 (한 번 더 10종목 제한 강제)
+            if not self.check_risk_limits(stock_code, OrderType.BUY, quantity, current_price):
+                logger.warning(f"🚫 10종목 제한! 매수 차단(최종): {stock_code}")
+                return None
             
             order_result = self.kiwoom_client.place_order(
                 stock_code=stock_code,
@@ -530,10 +525,11 @@ class OrderManager:
                 price=current_price
             )
             
-            if order_result and order_result.get("success"):
+            # 키움 API 주문 결과 판단 (return_code: 0이 성공)
+            if order_result and order_result.get("return_code") == 0:
                 # 주문 정보 저장
                 order = Order(
-                    order_id=order_result.get("order_id", f"VOL_ORDER_{datetime.now().timestamp()}"),
+                    order_id=order_result.get("ord_no", f"VOL_ORDER_{datetime.now().timestamp()}"),
                     stock_code=stock_code,
                     order_type=OrderType.BUY,
                     quantity=quantity,
@@ -568,12 +564,11 @@ class OrderManager:
                     }
                 }
                 
-                logger.info(f"거래량 급증 매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
+                logger.info(f"✅ 거래량 급증 매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
                 return order
             else:
-                logger.error(f"거래량 급증 매수 주문 실패: {stock_code} - {order_result}")
+                logger.error(f"❌ 거래량 급증 매수 주문 실패: {stock_code} - {order_result}")
                 return None
-                
         except Exception as e:
             logger.error(f"거래량 후보 처리 실패: {e}")
             return None
@@ -679,5 +674,96 @@ class OrderManager:
         }
     
     def get_current_holdings(self) -> set:
-        """현재 보유(매수) 종목 코드 집합 반환"""
-        return set([code for code, pos in self.positions.items() if pos.quantity > 0])
+        """현재 보유(매수) 종목 코드 집합 반환 (일반 포지션 + 거래량 포지션)"""
+        regular_holdings = set([code for code, pos in self.positions.items() if pos.quantity > 0])
+        volume_holdings = set(self.volume_positions.keys())
+        return regular_holdings.union(volume_holdings)
+    
+    def get_position_count(self) -> int:
+        """현재 보유 종목 수 반환 (일반 포지션 + 거래량 포지션)"""
+        current_positions = len([p for p in self.positions.values() if p.quantity > 0])
+        volume_positions = len(self.volume_positions)
+        return current_positions + volume_positions
+    
+    def can_buy_new_stock(self) -> bool:
+        """새 종목 매수 가능 여부 확인 (10종목 제한)"""
+        current_count = self.get_position_count()
+        max_positions = self.risk_management["max_positions"]
+        return current_count < max_positions
+    
+    def get_position_limit_status(self) -> dict:
+        """10종목 제한 상태 정보 반환"""
+        current_count = self.get_position_count()
+        current_positions = len([p for p in self.positions.values() if p.quantity > 0])
+        volume_positions = len(self.volume_positions)
+        max_positions = self.risk_management["max_positions"]
+        
+        return {
+            "current_total": current_count,
+            "current_positions": current_positions,
+            "volume_positions": volume_positions,
+            "max_positions": max_positions,
+            "remaining_slots": max_positions - current_count,
+            "can_buy_new": current_count < max_positions
+        }
+
+    def check_risk_limits(self, stock_code: str, order_type: OrderType, quantity: int, price: float) -> bool:
+        """리스크 한도 체크 - 10종목 엄격 제한 + 주가 제한"""
+        try:
+            # 최대 보유 종목 수 체크 (10종목 엄격 제한)
+            if order_type == OrderType.BUY:
+                # 일반 포지션 + 거래량 포지션 모두 포함하여 체크
+                current_positions = len([p for p in self.positions.values() if p.quantity > 0])
+                volume_positions = len(self.volume_positions)
+                total_positions = current_positions + volume_positions
+                
+                max_positions = self.risk_management["max_positions"]
+                strict_limit = self.risk_management.get("strict_position_limit", False)
+                
+                logger.info(f"[리스크체크] 일반:{current_positions}, 거래량:{volume_positions}, 총:{total_positions} (최대:{max_positions})")
+                
+                # 현재 종목이 이미 보유 중인지 확인 (일반 포지션 + 거래량 포지션 모두 체크)
+                current_position = self.positions.get(stock_code)
+                volume_position = self.volume_positions.get(stock_code)
+                is_new_stock = (not current_position or current_position.quantity == 0) and not volume_position
+                
+                if is_new_stock and total_positions >= max_positions:
+                    logger.warning(f"🚫 10종목 제한 도달! 매수 불가: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                    return False
+                elif not is_new_stock and total_positions > max_positions:
+                    logger.warning(f"🚫 10종목 초과! 매수 불가: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                    return False
+                
+                if strict_limit and total_positions >= max_positions:
+                    logger.info(f"📊 10종목 제한으로 인한 매수 제한: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                    return False
+                
+                # 🚨 주가 제한 체크 (새로 추가)
+                max_stock_price = getattr(self.settings, 'VOLUME_SCANNING', {}).get('max_stock_price', 50000)
+                min_stock_price = getattr(self.settings, 'VOLUME_SCANNING', {}).get('min_stock_price', 1000)
+                
+                if price > max_stock_price:
+                    logger.warning(f"🚫 주가 상한선 초과! 매수 불가: {stock_code} (현재가: {price:,}원, 상한선: {max_stock_price:,}원)")
+                    return False
+                
+                if price < min_stock_price:
+                    logger.warning(f"🚫 주가 하한선 미달! 매수 불가: {stock_code} (현재가: {price:,}원, 하한선: {min_stock_price:,}원)")
+                    return False
+            
+            # 일일 손실 한도 체크
+            if self.daily_pnl < -self.risk_management["max_daily_loss"]:
+                logger.warning(f"일일 손실 한도 초과: {self.daily_pnl:.2f}% < -{self.risk_management['max_daily_loss']:.2f}%")
+                return False
+            
+            # 동일 종목 중복 주문 체크
+            if stock_code in self.orders:
+                pending_order = self.orders[stock_code]
+                if pending_order.status in [OrderStatus.PENDING, OrderStatus.PARTIAL_FILLED]:
+                    logger.warning(f"동일 종목 주문 대기 중: {stock_code}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"리스크 한도 체크 실패: {e}")
+            return False

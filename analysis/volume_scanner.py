@@ -56,9 +56,9 @@ class VolumeScanner:
         self.last_breakout_check: Dict[str, datetime] = {}  # 종목별 마지막 돌파 체크 시간
         self.breakout_cooldown = 300  # 돌파 감지 후 5분간 대기
         
-        # API Rate Limiting
-        self.API_RATE_LIMIT = 2  # 초당 2건으로 제한
-        self.API_WINDOW = 2.0    # 2초
+        # API Rate Limiting (더 빠른 응답을 위해 조정)
+        self.API_RATE_LIMIT = 3  # 초당 3건으로 증가 (기존 2건에서 증가)
+        self.API_WINDOW = 1.0    # 1초로 단축 (기존 2초에서 단축)
         self.api_call_timestamps = collections.deque(maxlen=self.API_RATE_LIMIT)
         self.api_rate_lock = threading.Lock()
         
@@ -70,6 +70,10 @@ class VolumeScanner:
         self.max_trade_value = getattr(settings, 'VOLUME_SCANNING', {}).get('max_trade_value', 8_100_000_000)
         self.min_price_change = getattr(settings, 'VOLUME_SCANNING', {}).get('min_price_change', 0.01)
         self.min_execution_strength = getattr(settings, 'VOLUME_SCANNING', {}).get('min_execution_strength', 1.1)
+        
+        # 주가 제한 조건 (새로 추가)
+        self.max_stock_price = getattr(settings, 'VOLUME_SCANNING', {}).get('max_stock_price', 50000)  # 최대 5만원
+        self.min_stock_price = getattr(settings, 'VOLUME_SCANNING', {}).get('min_stock_price', 1000)   # 최소 1천원
         
         # 최적 범위 설정
         self.optimal_volume_ratio_range = getattr(settings, 'VOLUME_SCANNING', {}).get('optimal_volume_ratio_range', [0.5, 1.8])
@@ -148,8 +152,8 @@ class VolumeScanner:
             while True:
                 response = requests.post(url, headers=headers, json=data)
                 if response.status_code == 429:
-                    logger.warning('거래량 순위 조회 429 에러(Too Many Requests) 발생! 60초 대기 후 재시도')
-                    await asyncio.sleep(60)
+                    logger.warning('거래량 순위 조회 429 에러(Too Many Requests) 발생! 15초 대기 후 재시도 (기존 60초에서 단축)')
+                    await asyncio.sleep(15)  # 60초 → 15초로 단축
                     continue
                 if response.status_code != 200:
                     logger.error(f"거래량 순위 조회 실패: {response.status_code}")
@@ -340,6 +344,16 @@ class VolumeScanner:
                         logger.info(f"[{stock_name}({stock_code})] 거래대금 상한선 초과 - 거래대금: {trade_value:,}원 (상한선: {self.max_trade_value:,}원)")
                         continue  # 너무 큰 거래대금은 제외
                     
+                    # 🚨 주가 상한선 체크 (새로 추가)
+                    if current_price > self.max_stock_price:
+                        logger.info(f"[{stock_name}({stock_code})] 주가 상한선 초과 - 현재가: {current_price:,}원 (상한선: {self.max_stock_price:,}원)")
+                        continue  # 너무 높은 주가는 제외
+                    
+                    # 🚨 주가 하한선 체크 (새로 추가)
+                    if current_price < self.min_stock_price:
+                        logger.info(f"[{stock_name}({stock_code})] 주가 하한선 초과 - 현재가: {current_price:,}원 (하한선: {self.min_stock_price:,}원)")
+                        continue  # 너무 낮은 주가는 제외
+                    
                     # 2차 필터: 추가 조건 체크 (등락률, 거래대금 등)
                     if (price_change < self.min_price_change or 
                         trade_value < self.min_trade_value):
@@ -456,6 +470,12 @@ class VolumeScanner:
             
             # 거래대금 상한선 체크
             self.candidates = [c for c in self.candidates if c.trade_value <= self.max_trade_value]
+            
+            # 주가 상한선 체크
+            self.candidates = [c for c in self.candidates if c.current_price <= self.max_stock_price]
+            
+            # 주가 하한선 체크
+            self.candidates = [c for c in self.candidates if c.current_price >= self.min_stock_price]
             
             removed_count = before_count - len(self.candidates)
             if removed_count > 0:

@@ -77,24 +77,26 @@ class WebSocketClient:
         self.message_handlers[message_type] = handler
     
     async def connect(self):
-        """웹소켓 연결"""
+        """웹소켓 연결 (안정성 개선)"""
         try:
             # 토큰 가져오기
             token = await self.token_manager.get_valid_token()
             if not token:
-                raise Exception("유효한 토큰을 가져올 수 없습니다.")
+                logger.warning("유효한 토큰을 가져올 수 없습니다. 기본 연결 시도...")
+                # 토큰 없이도 연결 시도 (일부 API는 토큰 없이도 연결 가능)
             
-            # 웹소켓 URL (키움 API 형식)
+            # 웹소켓 URL
             ws_url = self.settings.KIWOOM_WEBSOCKET_URL
             
             logger.info(f"웹소켓 연결 시도: {ws_url}")
             
-            # 웹소켓 연결
+            # 웹소켓 연결 (타임아웃 증가)
             try:
                 self.websocket = await asyncio.wait_for(
                     websockets.connect(ws_url),
                     timeout=self.websocket_config["connection_timeout"]
                 )
+                logger.info("웹소켓 연결 성공")
             except asyncio.TimeoutError:
                 raise Exception(f"웹소켓 연결 타임아웃 ({self.websocket_config['connection_timeout']}초)")
             except websockets.exceptions.InvalidURI:
@@ -108,20 +110,19 @@ class WebSocketClient:
             self.reconnect_attempts = 0
             self.last_heartbeat = time.time()
             
-            logger.info("웹소켓 연결 성공")
-            
-            # 키움 API 로그인 메시지 전송
-            try:
-                login_message = {
-                    'trnm': 'LOGIN',
-                    'token': token
-                }
-                await self.websocket.send(json.dumps(login_message))
-                logger.info("로그인 메시지 전송 완료")
-            except Exception as e:
-                logger.error(f"로그인 메시지 전송 실패: {e}")
-                await self.disconnect()
-                raise
+            # 토큰이 있는 경우에만 로그인 메시지 전송
+            if token:
+                try:
+                    login_message = {
+                        'trnm': 'LOGIN',
+                        'token': token
+                    }
+                    await self.websocket.send(json.dumps(login_message))
+                    logger.info("로그인 메시지 전송 완료")
+                except Exception as e:
+                    logger.warning(f"로그인 메시지 전송 실패 (무시하고 계속): {e}")
+            else:
+                logger.info("토큰 없이 웹소켓 연결 완료")
             
             # 연결 콜백 호출
             if self.on_connect_callback:
@@ -323,26 +324,30 @@ class WebSocketClient:
                     logger.info("실시간 등록 성공")
                 else:
                     logger.error(f"실시간 등록 실패: {data.get('return_msg')}")
-            elif trnm == "STOCK_DATA" or trnm == "체결" or trnm == "호가":
-                # 실시간 주식 데이터 처리
+            elif trnm == "STOCK_DATA" or trnm == "체결" or trnm == "호가" or trnm == "REAL":
+                # 실시간 주식 데이터 처리 (REAL 타입 추가)
                 await self._handle_stock_data(data)
             elif trnm == "HEARTBEAT":
                 logger.debug("하트비트 수신")
             elif trnm == "ERROR":
                 logger.error(f"서버 에러: {data.get('message', 'Unknown error')}")
+            elif trnm == "SYSTEM":
+                # 시스템 메시지 처리
+                logger.debug(f"시스템 메시지: {data.get('message', 'Unknown system message')}")
             else:
                 # 알 수 없는 메시지 타입이지만 실시간 데이터일 가능성
-                if any(key in data for key in ["종목코드", "stock_code", "현재가", "current_price"]):
+                if any(key in data for key in ["종목코드", "stock_code", "현재가", "current_price", "체결가", "호가"]):
                     logger.debug(f"실시간 데이터로 추정되는 메시지: {trnm}")
                     await self._handle_stock_data(data)
                 else:
-                    logger.warning(f"알 수 없는 메시지 타입: {trnm}")
+                    logger.debug(f"알 수 없는 메시지 타입: {trnm}")
                     logger.debug(f"메시지 내용: {data}")
                 
         except json.JSONDecodeError as e:
             logger.error(f"JSON 파싱 실패: {e}")
         except Exception as e:
             logger.error(f"메시지 처리 실패: {e}")
+            logger.debug(f"원본 메시지: {message}")
     
     async def listen(self):
         """메시지 수신 루프"""
@@ -351,10 +356,17 @@ class WebSocketClient:
         
         try:
             async for message in self.websocket:
-                await self._handle_message(message)
+                try:
+                    await self._handle_message(message)
+                except Exception as e:
+                    logger.error(f"개별 메시지 처리 실패: {e}")
+                    continue  # 개별 메시지 실패 시에도 계속 수신
                 
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("웹소켓 연결이 종료되었습니다.")
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"웹소켓 연결이 종료되었습니다: {e}")
+            self.is_connected = False
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.warning(f"웹소켓 연결 오류: {e}")
             self.is_connected = False
         except Exception as e:
             logger.error(f"메시지 수신 중 오류: {e}")
@@ -362,7 +374,10 @@ class WebSocketClient:
         finally:
             # 연결 해제 콜백 호출
             if self.on_disconnect_callback:
-                await self.on_disconnect_callback()
+                try:
+                    await self.on_disconnect_callback()
+                except Exception as e:
+                    logger.error(f"연결 해제 콜백 실행 실패: {e}")
     
     async def reconnect(self):
         """재연결 시도"""

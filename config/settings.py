@@ -161,15 +161,17 @@ class Settings:
             "auto_trade_enabled": True,  # 자동매매 활성화
             "max_hold_time": 3600,  # 최대 보유 시간 (1시간)
             "optimal_volume_ratio_range": [0.5, 1.8],  # 최적 거래량비율 범위
-            "optimal_trade_value_range": [1_000_000_000, 20_000_000_000]  # 최적 거래대금 범위 (10억~200억)
+            "optimal_trade_value_range": [1_000_000_000, 20_000_000_000],  # 최적 거래대금 범위 (10억~200억)
+            "max_stock_price": 50000,  # 최대 주가: 5만원 미만 (새로 추가)
+            "min_stock_price": 1000    # 최소 주가: 1천원 이상 (새로 추가)
         }
         
-        # Sell parameters (매도 설정) - 쉽게 조정 가능
+        # Sell parameters (매도 설정) - 패턴 분석 기반 최적화
         self.SELL_SETTINGS = {
             "enabled": True,  # 자동 매도 활성화
             "monitoring_interval": 10,  # 매도 모니터링 주기 (30초에서 10초로 단축 - 빠른 반응)
-            "stop_loss_percent": -1.0,  # 손절 기준 (-2%에서 -1%로 변경)
-            "take_profit_percent": 2.0,  # 익절 기준 (+4%에서 +2%로 변경)
+            "stop_loss_percent": -1.0,  # 손절 기준 (패턴 분석 결과 유지)
+            "take_profit_percent": 2.5,  # 익절 기준 (2.0% → 2.5%로 상향 - 패턴 분석 기반)
             "sell_all_on_stop_loss": True,  # 손절 시 전량 매도
             "sell_all_on_take_profit": True,  # 익절 시 전량 매도
             "min_hold_time": 300,  # 최소 보유 시간 (5분)
@@ -177,31 +179,34 @@ class Settings:
             "partial_sell_ratio": 0.5  # 부분 매도 비율 (50%)
         }
         
-        # WebSocket settings
+        # WebSocket settings (연결 안정성 개선)
         self.WEBSOCKET = {
-            "reconnect_interval": 5,  # 재연결 간격 (초)
+            "reconnect_interval": 10,  # 재연결 간격 (5초 → 10초로 증가)
             "heartbeat_interval": 30,  # 하트비트 간격 (초)
-            "max_reconnect_attempts": 5,  # 최대 재연결 시도 횟수
-            "connection_timeout": 10,  # 연결 타임아웃 (초)
-            "message_timeout": 5  # 메시지 타임아웃 (초)
+            "max_reconnect_attempts": 3,  # 최대 재연결 시도 횟수 (5회 → 3회로 감소)
+            "connection_timeout": 30,  # 연결 타임아웃 (10초 → 30초로 증가)
+            "message_timeout": 10  # 메시지 타임아웃 (5초 → 10초로 증가)
         }
         
-        # WebSocket URLs (실제 키움 API 사용)
+        # WebSocket URLs (실제 키움 API 웹소켓 URL로 수정)
         if self.ENVIRONMENT == "simulation":
-            self.KIWOOM_WEBSOCKET_URL = "wss://mockapi.kiwoom.com:10000/api/dostk/websocket"  # 모의투자
+            self.KIWOOM_WEBSOCKET_URL = "wss://openapi.kiwoom.com:10000/websocket"  # 모의투자 웹소켓
         else:
-            self.KIWOOM_WEBSOCKET_URL = "wss://api.kiwoom.com:10000/api/dostk/websocket"  # 실제투자
+            self.KIWOOM_WEBSOCKET_URL = "wss://openapi.kiwoom.com:10000/websocket"  # 실제투자 웹소켓
         
-        # Risk management
+        # Risk management - 패턴 분석 기반 최적화 + 10종목 제한
         self.RISK_MANAGEMENT = {
             "max_position_size": 0.05,  # 전체 자산의 5% (10% → 5%)
             "position_size_ratio": 0.02,  # 계좌 잔고의 2% (5% → 2%)
             "max_daily_loss": 0.03,    # 일일 최대 손실 3% (5% → 3%)
-            "stop_loss": 0.01,         # 개별 종목 손절 2%에서 1%로 변경
-            "take_profit": 0.02,       # 개별 종목 익절 4%에서 2%로 변경
-            "max_positions": 10,       # 최대 보유 종목 수 (3개 → 10개로 증가)
-            "min_trade_amount": 100000,  # 최소 거래 금액 (10만원)
+            "stop_loss": 0.03,         # 개별 종목 손절 3% (패턴 분석 결과 유지)
+            "take_profit": 0.10,       # 개별 종목 익절 10%
+            "max_positions": 10,       # 최대 보유 종목 수 (정확히 10개로 제한)
+            "strict_position_limit": True,  # 10종목 제한 엄격 적용
+            "min_trade_amount": 100000,  # 최소 거래 금액 (10만원) - 패턴 분석 기반
+            "max_trade_amount": 500000,  # 최대 거래 금액 (50만원) - 패턴 분석 기반 추가
             "min_position_size": 1,    # 최소 주문 수량
+            "max_quantity_per_stock": 10,  # 종목당 최대 보유 수량 (10주) - 패턴 분석 기반 추가
             "max_per_stock": 1000000   # 주식별 최대 투자 금액 (100만원)
         }
         
