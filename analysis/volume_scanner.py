@@ -62,13 +62,18 @@ class VolumeScanner:
         self.api_call_timestamps = collections.deque(maxlen=self.API_RATE_LIMIT)
         self.api_rate_lock = threading.Lock()
         
-        # 스캐닝 설정 (실제 거래 조건) - 매수 조건 완화
+        # 스캐닝 설정 (최적화된 거래 조건 - 분석 결과 기반)
         self.scan_interval = getattr(settings, 'VOLUME_SCANNING', {}).get('scan_interval', 120)
-        self.min_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('min_volume_ratio', 1.0)
-        self.max_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('max_volume_ratio', 2.0)
-        self.min_trade_value = getattr(settings, 'VOLUME_SCANNING', {}).get('min_trade_value', 50_000_000)
+        self.min_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('min_volume_ratio', 0.2)
+        self.max_volume_ratio = getattr(settings, 'VOLUME_SCANNING', {}).get('max_volume_ratio', 1.9)
+        self.min_trade_value = getattr(settings, 'VOLUME_SCANNING', {}).get('min_trade_value', 180_000_000)
+        self.max_trade_value = getattr(settings, 'VOLUME_SCANNING', {}).get('max_trade_value', 8_100_000_000)
         self.min_price_change = getattr(settings, 'VOLUME_SCANNING', {}).get('min_price_change', 0.01)
         self.min_execution_strength = getattr(settings, 'VOLUME_SCANNING', {}).get('min_execution_strength', 1.1)
+        
+        # 최적 범위 설정
+        self.optimal_volume_ratio_range = getattr(settings, 'VOLUME_SCANNING', {}).get('optimal_volume_ratio_range', [0.5, 1.8])
+        self.optimal_trade_value_range = getattr(settings, 'VOLUME_SCANNING', {}).get('optimal_trade_value_range', [1_000_000_000, 20_000_000_000])
         
         # 자동매매 설정
         self.auto_trade_enabled = False
@@ -330,6 +335,11 @@ class VolumeScanner:
                         logger.info(f"[{stock_name}({stock_code})] 거래량 상한선 초과 - 거래량비율: {volume_ratio:.1f}% (상한선: {self.max_volume_ratio:.1f}%)")
                         continue  # 너무 극단적인 거래량 급증은 제외
                     
+                    # 🚨 거래대금 상한선 체크 (새로 추가)
+                    if trade_value > self.max_trade_value:
+                        logger.info(f"[{stock_name}({stock_code})] 거래대금 상한선 초과 - 거래대금: {trade_value:,}원 (상한선: {self.max_trade_value:,}원)")
+                        continue  # 너무 큰 거래대금은 제외
+                    
                     # 2차 필터: 추가 조건 체크 (등락률, 거래대금 등)
                     if (price_change < self.min_price_change or 
                         trade_value < self.min_trade_value):
@@ -367,6 +377,25 @@ class VolumeScanner:
                         else:
                             ma_trend = "보합추세"
                         
+                        # 최적 범위 점수 계산 (분석 결과 기반)
+                        score = execution_strength
+                        
+                        # 거래량비율이 최적 범위에 있으면 +20점
+                        if (self.optimal_volume_ratio_range[0] <= volume_ratio <= self.optimal_volume_ratio_range[1]):
+                            score += 20
+                            logger.info(f"[{stock_name}({stock_code})] 최적 거래량비율 범위! +20점")
+                        
+                        # 거래대금이 최적 범위에 있으면 +30점
+                        if (self.optimal_trade_value_range[0] <= trade_value <= self.optimal_trade_value_range[1]):
+                            score += 30
+                            logger.info(f"[{stock_name}({stock_code})] 최적 거래대금 범위! +30점")
+                        
+                        # 두 조건 모두 만족하면 추가 보너스 +10점
+                        if ((self.optimal_volume_ratio_range[0] <= volume_ratio <= self.optimal_volume_ratio_range[1]) and
+                            (self.optimal_trade_value_range[0] <= trade_value <= self.optimal_trade_value_range[1])):
+                            score += 10
+                            logger.info(f"[{stock_name}({stock_code})] 최적 조건 모두 만족! +10점 보너스")
+                        
                         candidate = VolumeCandidate(
                             stock_code=stock_code,
                             stock_name=stock_name,
@@ -374,7 +403,7 @@ class VolumeScanner:
                             volume_ratio=volume_ratio,
                             price_change=price_change,
                             trade_value=trade_value,
-                            score=execution_strength,  # 체결강도를 점수로 사용
+                            score=score,  # 최적화된 점수 사용
                             timestamp=datetime.now(),
                             is_breakout=is_breakout,
                             ma_trend=ma_trend,
@@ -385,10 +414,11 @@ class VolumeScanner:
                         
                         logger.info(f"★★ 매수 후보 선정 ★★ {stock_name}({stock_code})")
                         logger.info(f"   현재가: {current_price:,}원")
-                        logger.info(f"   거래량비율: {volume_ratio:.1f}%")
+                        logger.info(f"   거래량비율: {volume_ratio:.1f}% (최적범위: {self.optimal_volume_ratio_range[0]:.1f}~{self.optimal_volume_ratio_range[1]:.1f}%)")
                         logger.info(f"   등락률: {price_change:.2f}%")
-                        logger.info(f"   거래대금: {trade_value:,}원")
+                        logger.info(f"   거래대금: {trade_value:,}원 (최적범위: {self.optimal_trade_value_range[0]/1e8:.1f}~{self.optimal_trade_value_range[1]/1e8:.1f}억원)")
                         logger.info(f"   체결강도: {execution_strength:.1f}%")
+                        logger.info(f"   종합점수: {score:.1f}점")
                         logger.info(f"   시가상승: {'예' if is_breakout else '아니오'}")
                         logger.info(f"   추세: {ma_trend}")
                         
@@ -418,13 +448,18 @@ class VolumeScanner:
             # 후보 목록 업데이트
             self.candidates = candidates
 
-            # 🚨 후보 리스트에서 거래량이 200% 초과한 종목 즉시 제거
-            max_ratio = self.max_volume_ratio if hasattr(self, 'max_volume_ratio') else 200.0
+            # 🚨 후보 리스트에서 조건을 벗어난 종목 제거
             before_count = len(self.candidates)
-            self.candidates = [c for c in self.candidates if c.volume_ratio <= max_ratio]
+            
+            # 거래량비율 상한선 체크
+            self.candidates = [c for c in self.candidates if c.volume_ratio <= self.max_volume_ratio]
+            
+            # 거래대금 상한선 체크
+            self.candidates = [c for c in self.candidates if c.trade_value <= self.max_trade_value]
+            
             removed_count = before_count - len(self.candidates)
             if removed_count > 0:
-                logger.info(f"[후보 리스트 정리] 거래량 200% 초과 {removed_count}개 종목 후보에서 제거 완료")
+                logger.info(f"[후보 리스트 정리] 조건 미달 {removed_count}개 종목 후보에서 제거 완료")
 
             logger.info(f"스캔 완료: {len(self.candidates)}개 후보 종목 발견")
             return self.candidates

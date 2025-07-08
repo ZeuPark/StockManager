@@ -147,26 +147,29 @@ class Settings:
             }
         }
         
-        # Volume scanning conditions (실제 거래 조건)
+        # Volume scanning conditions (최적화된 거래 조건 - 분석 결과 기반)
         self.VOLUME_SCANNING = {
             "enabled": True,
-            "scan_interval": 30,  # 스캔 간격 (30초로 단축 - 빠른 신호 감지)
-            "min_volume_ratio": 1.0,  # 오늘 누적 거래량 ≥ 전일 총 거래량
-            "max_volume_ratio": 2.0,  # 거래량 상한선: 전일 대비 200% 이하
-            "min_trade_value": 100_000_000,  # 1분 거래대금 ≥ 1억원
-            "min_price_change": 0.02,  # 등락률 ≥ +2%
-            "min_execution_strength": 1.1,  # 체결강도 ≥ 110%
-            "max_candidates": 5,  # 최대 후보 종목 수 (3개 → 5개로 조정)
-            "auto_trade_enabled": True,  # 자동매매 활성화 여부
-            "max_hold_time": 3600  # 최대 보유 시간 (1시간)
+            "scan_interval": 30,  # 스캔 간격 (30초)
+            "min_volume_ratio": 0.2,  # 거래량비율 하한선: 0.2% (기존 1.0%에서 완화)
+            "max_volume_ratio": 1.9,  # 거래량비율 상한선: 1.9% (기존 2.0%에서 조정)
+            "min_trade_value": 180_000_000,  # 최소 거래대금: 1.8억원 (기존 1억원에서 상향)
+            "max_trade_value": 8_100_000_000,  # 최대 거래대금: 81억원 (새로 추가)
+            "min_price_change": 0.01,  # 등락률: 1% 이상 (기존 2%에서 완화)
+            "min_execution_strength": 1.1,  # 체결강도: 110% 이상 (유지)
+            "max_candidates": 3,  # 최대 후보 종목 수: 3개 (기존 5개에서 축소)
+            "auto_trade_enabled": True,  # 자동매매 활성화
+            "max_hold_time": 3600,  # 최대 보유 시간 (1시간)
+            "optimal_volume_ratio_range": [0.5, 1.8],  # 최적 거래량비율 범위
+            "optimal_trade_value_range": [1_000_000_000, 20_000_000_000]  # 최적 거래대금 범위 (10억~200억)
         }
         
         # Sell parameters (매도 설정) - 쉽게 조정 가능
         self.SELL_SETTINGS = {
             "enabled": True,  # 자동 매도 활성화
-            "monitoring_interval": 30,  # 매도 모니터링 주기 (60초 → 30초로 조정)
-            "stop_loss_percent": -2.0,  # 손절 기준 (-2%로 상향)
-            "take_profit_percent": 4.0,  # 익절 기준 (+4%로 하향)
+            "monitoring_interval": 10,  # 매도 모니터링 주기 (30초에서 10초로 단축 - 빠른 반응)
+            "stop_loss_percent": -1.0,  # 손절 기준 (-2%에서 -1%로 변경)
+            "take_profit_percent": 2.0,  # 익절 기준 (+4%에서 +2%로 변경)
             "sell_all_on_stop_loss": True,  # 손절 시 전량 매도
             "sell_all_on_take_profit": True,  # 익절 시 전량 매도
             "min_hold_time": 300,  # 최소 보유 시간 (5분)
@@ -194,8 +197,8 @@ class Settings:
             "max_position_size": 0.05,  # 전체 자산의 5% (10% → 5%)
             "position_size_ratio": 0.02,  # 계좌 잔고의 2% (5% → 2%)
             "max_daily_loss": 0.03,    # 일일 최대 손실 3% (5% → 3%)
-            "stop_loss": 0.02,         # 개별 종목 손절 2% (5% → 2%)
-            "take_profit": 0.04,       # 개별 종목 익절 4% (15% → 4%)
+            "stop_loss": 0.01,         # 개별 종목 손절 2%에서 1%로 변경
+            "take_profit": 0.02,       # 개별 종목 익절 4%에서 2%로 변경
             "max_positions": 10,       # 최대 보유 종목 수 (3개 → 10개로 증가)
             "min_trade_amount": 100000,  # 최소 거래 금액 (10만원)
             "min_position_size": 1,    # 최소 주문 수량
@@ -221,7 +224,7 @@ class Settings:
         # System settings
         self.SYSTEM = {
             "main_loop_interval": 1,  # 메인 루프 간격 (초)
-            "data_update_interval": 60,  # 데이터 업데이트 간격 (초)
+            "data_update_interval": 30,  # 데이터 업데이트 간격 (60초에서 30초로 단축)
             "log_level": "INFO",
             "max_retries": 3,
             "timeout": 30,

@@ -697,6 +697,54 @@ class DatabaseManager:
             self.logger.error(f"주문 내역 조회 실패: {e}")
             return []
 
+    def save_trade(self, trade: dict) -> int:
+        """trades 테이블에 거래 저장, trade_id 반환"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO trades (stock_code, stock_name, buy_price, sell_price, quantity, buy_time, sell_time, profit_rate, profit_amount, result)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    trade['stock_code'],
+                    trade['stock_name'],
+                    trade['buy_price'],
+                    trade.get('sell_price'),
+                    trade['quantity'],
+                    trade['buy_time'],
+                    trade.get('sell_time'),
+                    trade.get('profit_rate'),
+                    trade.get('profit_amount'),
+                    trade.get('result')
+                ))
+                conn.commit()
+                return cursor.lastrowid
+        except Exception as e:
+            self.logger.error(f"trades 저장 실패: {e}")
+            return -1
+
+    def save_trade_condition(self, trade_id: int, cond: dict) -> bool:
+        """trade_conditions 테이블에 조건 저장"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO trade_conditions (trade_id, volume_ratio, trade_value, execution_strength, price_change, market_cap)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    trade_id,
+                    cond.get('volume_ratio'),
+                    cond.get('trade_value'),
+                    cond.get('execution_strength'),
+                    cond.get('price_change'),
+                    cond.get('market_cap')
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"trade_conditions 저장 실패: {e}")
+            return False
+
 
 # 전역 데이터베이스 매니저 인스턴스
 _db_manager = None

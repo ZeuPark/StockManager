@@ -208,7 +208,31 @@ class OrderManager:
                     'created_at': order.order_time
                 }
                 self.db_manager.save_order(stock_code, order_data)
-                
+                # === 거래 분석용 DB 저장 ===
+                trade = {
+                    'stock_code': stock_code,
+                    'stock_name': getattr(stock_data, 'name', stock_code),
+                    'buy_price': current_price,
+                    'sell_price': None,
+                    'quantity': quantity,
+                    'buy_time': order.order_time,
+                    'sell_time': None,
+                    'profit_rate': None,
+                    'profit_amount': None,
+                    'result': None
+                }
+                trade_id = self.db_manager.save_trade(trade)
+                # 매수 시점 조건 저장
+                cond = {
+                    'volume_ratio': getattr(stock_data, 'volume_ratio', None),
+                    'trade_value': getattr(stock_data, 'trade_value', None),
+                    'execution_strength': getattr(stock_data, 'execution_strength', None),
+                    'price_change': getattr(stock_data, 'price_change', None),
+                    'market_cap': getattr(stock_data, 'market_cap', None)
+                }
+                if trade_id > 0:
+                    self.db_manager.save_trade_condition(trade_id, cond)
+                # === END ===
                 self.orders[stock_code] = order
                 self.daily_trades += 1
                 
@@ -265,7 +289,25 @@ class OrderManager:
                     'created_at': order.order_time
                 }
                 self.db_manager.save_order(stock_code, order_data)
-                
+                # === 거래 분석용 DB 업데이트 ===
+                # 가장 최근 매수 거래 찾기
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, buy_price, buy_time, quantity FROM trades WHERE stock_code=? AND sell_price IS NULL ORDER BY buy_time DESC LIMIT 1", (stock_code,))
+                    row = cursor.fetchone()
+                    if row:
+                        trade_id = row[0]
+                        buy_price = row[1]
+                        buy_time = row[2]
+                        buy_qty = row[3]
+                        profit_rate = ((price - buy_price) / buy_price) * 100 if buy_price else None
+                        profit_amount = (price - buy_price) * quantity if buy_price else None
+                        result = "익절" if profit_rate and profit_rate > 0 else "손절"
+                        cursor.execute("""
+                            UPDATE trades SET sell_price=?, sell_time=?, profit_rate=?, profit_amount=?, result=? WHERE id=?
+                        """, (price, datetime.now(), profit_rate, profit_amount, result, trade_id))
+                        conn.commit()
+                # === END ===
                 self.orders[stock_code] = order
                 self.daily_trades += 1
                 
