@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, Any
 import sqlite3
 import pandas as pd
+from prometheus_client import start_http_server
 
 # 프로젝트 루트 경로 추가
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +25,7 @@ from orders.order_manager import OrderManager
 from analysis.volume_scanner import VolumeScanner
 from monitor.sell_monitor import SellMonitor
 from utils.logger import get_logger
+from monitor.prometheus_metrics import set_holdings_count
 
 # 로거 설정
 logger = get_logger("main")
@@ -142,6 +144,7 @@ class TradingSystem:
     async def print_realtime_status(self):
         """실시간 상태/분석 결과 출력 (TOP3 수익률, 보유 종목 등)"""
         try:
+            # DB에서 완료된 거래 조회 (TOP3 수익률)
             conn = sqlite3.connect('database/stock_manager.db')
             query = '''
             SELECT t.stock_code, t.stock_name, t.buy_price, t.sell_price, t.profit_rate, t.result,
@@ -159,21 +162,51 @@ class TradingSystem:
                     print(f"{row['stock_code']} {row['stock_name']}: {row['profit_rate']:.2f}% (거래량: {row['volume_ratio']}%, 거래대금: {row['trade_value']})")
             else:
                 print("(아직 거래 없음)")
-            # 보유 중인 종목
-            holding_query = '''
-            SELECT t.stock_code, t.stock_name, t.buy_price, c.volume_ratio, c.trade_value
-            FROM trades t
-            LEFT JOIN trade_conditions c ON t.id = c.trade_id
-            WHERE t.sell_price IS NULL
-            '''
-            holding_df = pd.read_sql_query(holding_query, conn)
-            print("\n=== [보유 중인 종목] ===")
-            if not holding_df.empty:
-                for _, row in holding_df.iterrows():
-                    print(f"{row['stock_code']} {row['stock_name']}: 매수가 {row['buy_price']} (거래량: {row['volume_ratio']}%, 거래대금: {row['trade_value']})")
-            else:
-                print("(보유 중인 종목 없음)")
             conn.close()
+            
+            # 실제 계좌에서 보유 종목 조회
+            if self.kiwoom_client:
+                try:
+                    account_info = self.kiwoom_client.get_account_info()
+                    if account_info and 'acnt_evlt_remn_indv_tot' in account_info:
+                        holdings = []
+                        for stock in account_info['acnt_evlt_remn_indv_tot']:
+                            stock_code = stock.get('stk_cd', '')
+                            if stock_code and stock_code.startswith('A'):
+                                actual_code = stock_code[1:]  # A 제거
+                                stock_name = stock.get('stk_nm', '')
+                                quantity = int(stock.get('rmnd_qty', '0'))
+                                current_price = int(stock.get('cur_prc', '0'))
+                                profit_rate = float(stock.get('prft_rt', '0')) / 100
+                                purchase_price = int(stock.get('pur_pric', '0'))
+                                
+                                if quantity > 0:  # 실제 보유 수량이 있는 종목만
+                                    holdings.append({
+                                        'code': actual_code,
+                                        'name': stock_name,
+                                        'quantity': quantity,
+                                        'current_price': current_price,
+                                        'purchase_price': purchase_price,
+                                        'profit_rate': profit_rate
+                                    })
+                        
+                        print("\n=== [보유 중인 종목] ===")
+                        if holdings:
+                            for holding in holdings:
+                                profit_color = "🔴" if holding['profit_rate'] < 0 else "🟢"
+                                print(f"{profit_color} {holding['code']} {holding['name']}: {holding['quantity']}주 @ {holding['current_price']:,}원 (수익률: {holding['profit_rate']*100:.2f}%)")
+                        else:
+                            print("(보유 중인 종목 없음)")
+                    else:
+                        print("\n=== [보유 중인 종목] ===")
+                        print("(계좌 정보 조회 실패)")
+                except Exception as e:
+                    print(f"\n=== [보유 중인 종목] ===")
+                    print(f"(계좌 조회 오류: {e})")
+            else:
+                print("\n=== [보유 중인 종목] ===")
+                print("(키움 클라이언트 없음)")
+                
         except Exception as e:
             print(f"[실시간 상태 출력 오류] {e}")
 
@@ -246,6 +279,7 @@ class TradingSystem:
             # 최종 포지션 요약 출력
             if self.order_manager:
                 summary = self.order_manager.get_position_summary()
+                set_holdings_count(summary['total_positions'])
                 logger.info("=== 최종 포지션 요약 ===")
                 logger.info(f"총 보유 종목: {summary['total_positions']}개")
                 logger.info(f"총 보유 가치: {summary['total_value']:,.0f}원")
@@ -277,6 +311,7 @@ async def main():
     trading_system = TradingSystem()
     
     try:
+        start_http_server(8000)
         await trading_system.start()
     except KeyboardInterrupt:
         logger.info("사용자에 의해 중단됨")

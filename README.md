@@ -222,8 +222,67 @@ python tests/test_volume_scanner.py
 - **로그/DB/모니터링**: 모든 주요 이벤트/상태가 DB 및 로그로 기록됨
 - **확장/운영/분석**: 폴더별로 모듈화되어 유지보수 및 확장 용이
 
+## 운영/보안/장애 대응 안내
+
+### 1. DB 스키마 관리
+- `database/init.sql`로 모든 테이블이 자동 생성됩니다.
+- DB 초기화 시 `init.sql`만 실행하면 됩니다.
+
+### 2. 민감 정보 관리
+- 실제 API 키, 토큰 등은 `.env` 파일로 관리하세요.
+- `.env.example` 파일을 참고해 환경변수를 설정하세요.
+- `.env` 파일은 깃에 올리지 마세요.
+
+### 3. 로그 관리
+- `cleanup_logs.py`를 주기적으로 실행해 오래된/대용량 로그를 자동 정리하세요.
+- 민감 정보가 로그에 남지 않도록 주의하세요.
+
+### 4. 장애/에러 대응
+- 에러 발생 시 `logs/error.log`를 확인하세요.
+- DB, 네트워크, 인증 등 장애 발생 시 서비스 재시작 또는 관리자에게 문의하세요.
+
+### 5. 기타
+- 코드/로직을 변경하지 않고 운영/보안/유지보수만 보완할 때는 위 가이드만 따르면 됩니다.
+
 ---
 
 추가적인 실행법, 배포, 운영 자동화, 문서화가 필요하면 언제든 요청해 주세요! 
 이걸 깃헙에다 올린 이유는 당연히 이렇게 해도 돈이 안벌려서 그런거고, 저처럼 주식으로 돈을 벌 수 있을거라는 허망된 꿈을 가지고 있는 새로운 개발자에게 조금이나마 도움이 될 수 있도록 여기에 올립니다. 
 만약 조금의 수익을 얻은 사람이 있다면 저에게 커피 한잔만 사주십쇼. 
+
+## Prometheus + Grafana 실시간 모니터링 연동 가이드
+
+### 1. Python 코드에서 메트릭 노출
+- `monitor/prometheus_metrics.py` 참고
+- 보유 종목 수, 웹소켓 연결 상태, 에러 카운트 등 주요 지표를 Prometheus로 노출
+- 실제 시스템에서는 main.py 등에서 아래처럼 사용:
+  ```python
+  from monitor.prometheus_metrics import set_websocket_status, set_holdings_count, inc_error_count
+  set_websocket_status(True)
+  set_holdings_count(5)
+  inc_error_count()
+  ```
+
+### 2. requirements.txt에 prometheus_client 추가
+- `pip install -r requirements.txt`로 설치
+
+### 3. Prometheus 서버 설정
+- `monitoring/prometheus.yml` 참고
+- 예시:
+  ```yaml
+  scrape_configs:
+    - job_name: 'stockmanager'
+      static_configs:
+        - targets: ['localhost:8000']
+  ```
+- Prometheus에서 Python 메트릭 서버(`localhost:8000/metrics`)를 수집
+
+### 4. Grafana 대시보드 연동
+- Prometheus를 데이터 소스로 추가
+- 원하는 메트릭(holdings_count, websocket_connected 등)으로 그래프/표/알람 생성
+- 코드/로직 변경 없이 대시보드에서 자유롭게 시각화/알람 설정 가능
+
+### 5. Github 업로드/운영 시 주의
+- `monitor/prometheus_metrics.py`, `requirements.txt`, `monitoring/prometheus.yml` 등은 github에 포함
+- 실제 민감 정보/운영 설정은 `.env`로 관리
+- README에 모니터링 가이드 포함(이 문서) 

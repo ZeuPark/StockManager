@@ -151,12 +151,10 @@ class SellMonitor:
             self.logger.error(f"종목 {stock_code} 확인 중 오류: {e}")
     
     def _check_min_hold_time(self, stock_code: str) -> bool:
-        """최소 보유 시간 확인"""
-        min_hold_time = self.sell_settings["min_hold_time"]
-        
-        # 보유 종목의 매수 시간을 추적하는 로직 (현재는 단순화)
-        # 실제로는 매수 시간을 DB나 메모리에 저장해야 함
-        return True  # 임시로 항상 True 반환
+        """최소 보유 시간 확인 (현재 비활성화)"""
+        # min_hold_time = self.sell_settings.get("min_hold_time", 0)
+        # 최소 보유 시간 기능이 주석 처리되어 있으므로 항상 True 반환
+        return True
     
     async def _execute_sell_order(self, stock_code: str, stock_name: str, quantity: int, reason: str):
         """매도 주문 실행"""

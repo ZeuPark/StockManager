@@ -13,9 +13,9 @@ scrape_configs:
       - targets: ['localhost:9090']
 
   # Stock Manager Application
-  - job_name: 'stock-manager'
+  - job_name: 'stockmanager'
     static_configs:
-      - targets: ['stock-manager:8000']
+      - targets: ['app:8000']
     metrics_path: '/metrics'
     scrape_interval: 10s
 

@@ -680,10 +680,66 @@ class OrderManager:
         return regular_holdings.union(volume_holdings)
     
     def get_position_count(self) -> int:
-        """현재 보유 종목 수 반환 (일반 포지션 + 거래량 포지션)"""
+        """현재 보유 종목 수 반환 (실제 계좌 기준)"""
+        return self.get_actual_position_count()
+    
+    def get_actual_position_count(self) -> int:
+        """실제 계좌 보유 종목 수 반환"""
+        try:
+            # 실제 계좌 정보 조회
+            account_info = self.kiwoom_client.get_account_info()
+            if not account_info:
+                logger.warning("계좌 정보 조회 실패 - 메모리 기준으로 계산")
+                return self._get_memory_position_count()
+            
+            # 보유 종목 추출
+            holdings = self._extract_holdings_from_account(account_info)
+            actual_count = len(holdings)
+            
+            logger.info(f"실제 계좌 보유 종목 수: {actual_count}개")
+            return actual_count
+            
+        except Exception as e:
+            logger.error(f"실제 계좌 조회 실패: {e} - 메모리 기준으로 계산")
+            return self._get_memory_position_count()
+    
+    def _get_memory_position_count(self) -> int:
+        """메모리 기준 보유 종목 수 반환 (fallback)"""
         current_positions = len([p for p in self.positions.values() if p.quantity > 0])
         volume_positions = len(self.volume_positions)
         return current_positions + volume_positions
+    
+    def _extract_holdings_from_account(self, account_info: Dict) -> Dict[str, Dict]:
+        """계좌 정보에서 보유 종목 추출"""
+        holdings = {}
+        
+        try:
+            # acnt_evlt_remn_indv_tot 필드에서 보유 종목 정보 추출
+            if "acnt_evlt_remn_indv_tot" in account_info:
+                for stock in account_info["acnt_evlt_remn_indv_tot"]:
+                    stock_code = stock.get("stk_cd", "")
+                    if stock_code and stock_code.startswith("A"):  # A로 시작하는 종목코드
+                        # A 제거하여 실제 종목코드 추출
+                        actual_code = stock_code[1:]
+                        quantity = int(stock.get("rmnd_qty", "0"))
+                        
+                        # 수량이 있는 종목만 카운트
+                        if quantity > 0:
+                            holdings[actual_code] = {
+                                "stock_name": stock.get("stk_nm", ""),
+                                "quantity": quantity,
+                                "purchase_price": int(stock.get("pur_pric", "0")),
+                                "current_price": int(stock.get("cur_prc", "0")),
+                                "profit_loss": int(stock.get("evltv_prft", "0")),
+                                "profit_rate": float(stock.get("prft_rt", "0")) / 100,
+                                "purchase_amount": int(stock.get("pur_amt", "0"))
+                            }
+            
+            return holdings
+            
+        except Exception as e:
+            logger.error(f"보유 종목 추출 중 오류: {e}")
+            return {}
     
     def can_buy_new_stock(self) -> bool:
         """새 종목 매수 가능 여부 확인 (10종목 제한)"""
@@ -692,50 +748,45 @@ class OrderManager:
         return current_count < max_positions
     
     def get_position_limit_status(self) -> dict:
-        """10종목 제한 상태 정보 반환"""
-        current_count = self.get_position_count()
-        current_positions = len([p for p in self.positions.values() if p.quantity > 0])
-        volume_positions = len(self.volume_positions)
+        """10종목 제한 상태 정보 반환 (실제 계좌 기준)"""
+        actual_count = self.get_actual_position_count()
         max_positions = self.risk_management["max_positions"]
         
         return {
-            "current_total": current_count,
-            "current_positions": current_positions,
-            "volume_positions": volume_positions,
+            "current_total": actual_count,
+            "actual_positions": actual_count,
             "max_positions": max_positions,
-            "remaining_slots": max_positions - current_count,
-            "can_buy_new": current_count < max_positions
+            "remaining_slots": max_positions - actual_count,
+            "can_buy_new": actual_count < max_positions
         }
 
     def check_risk_limits(self, stock_code: str, order_type: OrderType, quantity: int, price: float) -> bool:
-        """리스크 한도 체크 - 10종목 엄격 제한 + 주가 제한"""
+        """리스크 한도 체크 - 실제 계좌 기준 10종목 제한 + 주가 제한"""
         try:
-            # 최대 보유 종목 수 체크 (10종목 엄격 제한)
+            # 최대 보유 종목 수 체크 (실제 계좌 기준)
             if order_type == OrderType.BUY:
-                # 일반 포지션 + 거래량 포지션 모두 포함하여 체크
-                current_positions = len([p for p in self.positions.values() if p.quantity > 0])
-                volume_positions = len(self.volume_positions)
-                total_positions = current_positions + volume_positions
+                # 실제 계좌 보유 종목 수 조회
+                actual_position_count = self.get_actual_position_count()
                 
                 max_positions = self.risk_management["max_positions"]
                 strict_limit = self.risk_management.get("strict_position_limit", False)
                 
-                logger.info(f"[리스크체크] 일반:{current_positions}, 거래량:{volume_positions}, 총:{total_positions} (최대:{max_positions})")
+                logger.info(f"[리스크체크] 실제 계좌 보유: {actual_position_count}개 (최대:{max_positions}개)")
                 
-                # 현재 종목이 이미 보유 중인지 확인 (일반 포지션 + 거래량 포지션 모두 체크)
+                # 현재 종목이 이미 보유 중인지 확인
                 current_position = self.positions.get(stock_code)
                 volume_position = self.volume_positions.get(stock_code)
                 is_new_stock = (not current_position or current_position.quantity == 0) and not volume_position
                 
-                if is_new_stock and total_positions >= max_positions:
-                    logger.warning(f"🚫 10종목 제한 도달! 매수 불가: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                if is_new_stock and actual_position_count >= max_positions:
+                    logger.warning(f"🚫 10종목 제한 도달! 매수 불가: {stock_code} (실제 보유: {actual_position_count}개)")
                     return False
-                elif not is_new_stock and total_positions > max_positions:
-                    logger.warning(f"🚫 10종목 초과! 매수 불가: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                elif not is_new_stock and actual_position_count > max_positions:
+                    logger.warning(f"🚫 10종목 초과! 매수 불가: {stock_code} (실제 보유: {actual_position_count}개)")
                     return False
                 
-                if strict_limit and total_positions >= max_positions:
-                    logger.info(f"📊 10종목 제한으로 인한 매수 제한: {stock_code} (현재 보유: {total_positions}개 - 일반:{current_positions}개, 거래량:{volume_positions}개)")
+                if strict_limit and actual_position_count >= max_positions:
+                    logger.info(f"📊 10종목 제한으로 인한 매수 제한: {stock_code} (실제 보유: {actual_position_count}개)")
                     return False
                 
                 # 🚨 주가 제한 체크 (새로 추가)

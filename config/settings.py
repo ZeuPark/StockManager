@@ -170,11 +170,11 @@ class Settings:
         self.SELL_SETTINGS = {
             "enabled": True,  # 자동 매도 활성화
             "monitoring_interval": 10,  # 매도 모니터링 주기 (30초에서 10초로 단축 - 빠른 반응)
-            "stop_loss_percent": -1.0,  # 손절 기준 (패턴 분석 결과 유지)
-            "take_profit_percent": 2.5,  # 익절 기준 (2.0% → 2.5%로 상향 - 패턴 분석 기반)
+            "stop_loss_percent": -1.7,  # 손절 기준 (패턴 분석 결과 유지)
+            "take_profit_percent": 3.5,  # 익절 기준 (2.0% → 2.5%로 상향 - 패턴 분석 기반)
             "sell_all_on_stop_loss": True,  # 손절 시 전량 매도
             "sell_all_on_take_profit": True,  # 익절 시 전량 매도
-            "min_hold_time": 300,  # 최소 보유 시간 (5분)
+            # "min_hold_time": 300,  # 최소 보유 시간 (5분)
             "enable_partial_sell": False,  # 부분 매도 활성화
             "partial_sell_ratio": 0.5  # 부분 매도 비율 (50%)
         }

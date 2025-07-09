@@ -120,6 +120,33 @@ CREATE TABLE IF NOT EXISTS auto_trading_candidates (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 거래 내역 테이블 (자동매매/분석용)
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_code TEXT,
+    stock_name TEXT,
+    buy_price INTEGER,
+    sell_price INTEGER,
+    quantity INTEGER,
+    buy_time DATETIME,
+    sell_time DATETIME,
+    profit_rate REAL,
+    profit_amount INTEGER,
+    result TEXT
+);
+
+-- 거래 조건 테이블 (자동매매/분석용)
+CREATE TABLE IF NOT EXISTS trade_conditions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id INTEGER,
+    volume_ratio REAL,
+    trade_value INTEGER,
+    execution_strength REAL,
+    price_change REAL,
+    market_cap INTEGER,
+    FOREIGN KEY(trade_id) REFERENCES trades(id)
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_stock_id ON orders(stock_id);

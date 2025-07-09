@@ -1,45 +1,8 @@
-# Use Python 3.11 slim image
-FROM python:3.11-slim
-
-# Set working directory
+# 기존 Python 앱 빌드 (main.py, requirements.txt 등)
+FROM python:3.10-slim as app
 WORKDIR /app
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
-
-# Install system dependencies (minimal)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        gcc \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
 COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p logs data tmp
-
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-USER app
-
-# Expose port (if needed for web interface)
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
-
-# Default command
+# 메트릭 서버 실행용 (main.py 또는 monitor/prometheus_metrics.py)
 CMD ["python", "main.py"] 

@@ -1,57 +1,35 @@
 version: '3.8'
 
 services:
-  # Main application
-  stock-manager:
-    build: .
-    container_name: stock-manager-app
-    restart: unless-stopped
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stockmanager-app
     volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./config:/app/config:ro
+      - .:/app
+    ports:
+      - "8000:8000"  # Prometheus 메트릭 서버
     environment:
-      - ENVIRONMENT=simulation
-      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
     depends_on:
-      - postgres
-      - redis
-    networks:
-      - stock-network
-
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: stock-manager-db
+      - app
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: stock_manager
-      POSTGRES_USER: stock_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-stock_password}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
     ports:
-      - "5432:5432"
-    networks:
-      - stock-network
-
-  # Redis for caching and real-time data
-  redis:
-    image: redis:7-alpine
-    container_name: stock-manager-redis
-    restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    networks:
-      - stock-network
-
-volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  stock-network:
-    driver: bridge 
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped 
