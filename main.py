@@ -23,6 +23,8 @@ from api.kiwoom_client import KiwoomClient
 from api.websocket_client import WebSocketClient
 from orders.order_manager import OrderManager
 from analysis.volume_scanner import VolumeScanner
+from analysis.momentum_analyzer import MomentumAnalyzer
+from analysis.strategy2_analyzer import Strategy2Analyzer  # 전략 2 분석기 추가
 from monitor.sell_monitor import SellMonitor
 from utils.logger import get_logger
 from monitor.prometheus_metrics import set_holdings_count
@@ -40,6 +42,8 @@ class TradingSystem:
         self.order_manager = OrderManager(self.settings, self.kiwoom_client)
         self.websocket_client = WebSocketClient(self.settings, self.token_manager)
         self.volume_scanner = VolumeScanner(self.settings, self.token_manager)
+        self.momentum_analyzer = MomentumAnalyzer(self.settings)
+        self.strategy2_analyzer = Strategy2Analyzer(self.settings, self.token_manager)  # 전략 2 분석기 추가
         self.sell_monitor = SellMonitor(self.settings, self.kiwoom_client)
         
         # 시스템 상태
@@ -77,6 +81,11 @@ class TradingSystem:
             # 주문 매니저 연결
             self.websocket_client.set_order_manager(self.order_manager)
             self.volume_scanner.set_order_manager(self.order_manager)
+            self.momentum_analyzer.set_order_manager(self.order_manager)
+            self.strategy2_analyzer.set_order_manager(self.order_manager)
+            
+            # 전략 2 분석기에 Volume Scanner 연결 (데이터 공유)
+            self.strategy2_analyzer.set_volume_scanner(self.volume_scanner)
             
             # 거래량 스캐닝 설정
             if self.settings.VOLUME_SCANNING.get("enabled", False):
@@ -86,6 +95,12 @@ class TradingSystem:
                 self.volume_scanner.min_trade_value = self.settings.VOLUME_SCANNING.get("min_trade_value", 50_000_000)
                 self.volume_scanner.min_score = self.settings.VOLUME_SCANNING.get("min_score", 5)
                 logger.info("거래량 스캐닝 활성화")
+            
+            # 전략 2 분석기 설정
+            if self.settings.VOLUME_SCANNING.get("strategy2_enabled", False):
+                self.strategy2_analyzer.auto_trade_enabled = self.settings.VOLUME_SCANNING.get("auto_trade_enabled", False)
+                self.strategy2_analyzer.scan_interval = self.settings.VOLUME_SCANNING.get("scan_interval", 30)
+                logger.info("전략 2 분석기 활성화")
             
             logger.info("시스템 초기화 완료")
             
@@ -236,6 +251,12 @@ class TradingSystem:
                 tasks.append(volume_task)
                 logger.info("거래량 스캐닝 태스크 시작")
             
+            # 전략 2 분석기 스캐닝 태스크 (웹소켓과 독립적으로 실행)
+            if self.settings.VOLUME_SCANNING.get("strategy2_enabled", False):
+                strategy2_task = asyncio.create_task(self.strategy2_analyzer.start_scanning())
+                tasks.append(strategy2_task)
+                logger.info("전략 2 분석기 스캐닝 태스크 시작")
+            
             # 매도 모니터링 태스크 (웹소켓과 독립적으로 실행)
             if self.settings.SELL_SETTINGS.get("enabled", False):
                 sell_monitor_task = asyncio.create_task(self.sell_monitor.start_monitoring())
@@ -247,13 +268,14 @@ class TradingSystem:
             tasks.append(status_task)
             logger.info("상태 출력 태스크 시작")
             
-            # 웹소켓 태스크 (연결 실패 시에도 다른 태스크는 계속 실행)
-            try:
-                websocket_task = asyncio.create_task(self.websocket_client.run(self.settings.TARGET_STOCKS))
-                tasks.append(websocket_task)
-                logger.info("웹소켓 태스크 시작")
-            except Exception as e:
-                logger.warning(f"웹소켓 태스크 시작 실패 (다른 기능은 계속 실행): {e}")
+            # 웹소켓 태스크 제거 (API 기반 스캐닝으로 대체)
+            # try:
+            #     websocket_task = asyncio.create_task(self.websocket_client.run(self.settings.TARGET_STOCKS))
+            #     tasks.append(websocket_task)
+            #     logger.info("웹소켓 태스크 시작")
+            # except Exception as e:
+            #     logger.warning(f"웹소켓 태스크 시작 실패 (다른 기능은 계속 실행): {e}")
+            logger.info("웹소켓 태스크 제거됨 (API 기반 스캐닝으로 대체)")
             
             # 모든 태스크 실행 (하나라도 실패해도 다른 태스크는 계속)
             if tasks:
@@ -272,9 +294,9 @@ class TradingSystem:
         if self.is_running:
             self.is_running = False
             
-            # 웹소켓 연결 해제
-            if self.websocket_client:
-                await self.websocket_client.disconnect()
+            # 웹소켓 연결 해제 (제거됨)
+            # if self.websocket_client:
+            #     await self.websocket_client.disconnect()
             
             # 최종 포지션 요약 출력
             if self.order_manager:
@@ -299,11 +321,13 @@ class TradingSystem:
             "is_running": self.is_running,
             "start_time": self.start_time,
             "environment": self.settings.ENVIRONMENT,
-            "websocket_status": self.websocket_client.get_status() if self.websocket_client else None,
+            "websocket_status": "제거됨 (API 기반 스캐닝으로 대체)",
             "position_summary": self.order_manager.get_position_summary() if self.order_manager else None,
             "volume_scanner_status": self.volume_scanner.get_auto_trade_status() if self.volume_scanner else None,
             "volume_positions": self.order_manager.get_volume_positions_summary() if self.order_manager else None,
-            "volume_candidates": self.volume_scanner.get_candidates_summary() if self.volume_scanner else None
+            "volume_candidates": self.volume_scanner.get_candidates_summary() if self.volume_scanner else None,
+            "strategy2_analyzer_status": self.strategy2_analyzer.get_auto_trade_status() if self.strategy2_analyzer else None,
+            "strategy2_candidates": self.strategy2_analyzer.get_candidates_summary() if self.strategy2_analyzer else None
         }
 
 async def main():

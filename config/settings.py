@@ -159,11 +159,26 @@ class Settings:
             "min_execution_strength": 1.1,  # 체결강도: 110% 이상 (유지)
             "max_candidates": 3,  # 최대 후보 종목 수: 3개 (기존 5개에서 축소)
             "auto_trade_enabled": True,  # 자동매매 활성화
-            "max_hold_time": 3600,  # 최대 보유 시간 (1시간)
+            "max_hold_time": 3600,  # 최대 보유 시간 (1시간) - 거래량 급증 전략용
+            "strategy2_max_hold_time": 7200,  # 전략 2 최대 보유 시간 (2시간) - 조용한 상승 전략용
             "optimal_volume_ratio_range": [0.5, 1.8],  # 최적 거래량비율 범위
             "optimal_trade_value_range": [1_000_000_000, 20_000_000_000],  # 최적 거래대금 범위 (10억~200억)
             "max_stock_price": 50000,  # 최대 주가: 5만원 미만 (새로 추가)
-            "min_stock_price": 1000    # 최소 주가: 1천원 이상 (새로 추가)
+            "min_stock_price": 1000,    # 최소 주가: 1천원 이상 (새로 추가)
+            
+            # 🎯 전략 2 최종 버전: 핵심 조건 + 추가 확인 조건
+            "strategy2_enabled": True,  # 전략 2 활성화
+            "strategy2_core_conditions": {
+                "price_change_range": [0.5, 3.0],  # 등락률: +0.5% ~ +3% (과열 방지 필터)
+                "volume_ratio_max": 120.0,  # 거래량비율: 120% 미만 (조용한 상태 포착 필터)
+            },
+            "strategy2_additional_conditions": {
+                "min_market_amount": 150_000_000,  # 시장거래대금: 1.5억원 이상
+                "ma_trend_enabled": True,  # 이동평균선 배열: 5일선 > 20일선 (단기 상승 추세 확인)
+                "ma_short_period": 5,  # 단기 이동평균선 기간
+                "ma_long_period": 20,  # 장기 이동평균선 기간
+            },
+            "strategy2_logic": "AND_OR",  # 매수 신호 = (핵심 조건 1 AND 핵심 조건 2) AND (추가 조건 1 OR 추가 조건 2)
         }
         
         # Sell parameters (매도 설정) - 패턴 분석 기반 최적화
@@ -194,7 +209,7 @@ class Settings:
         else:
             self.KIWOOM_WEBSOCKET_URL = "wss://openapi.kiwoom.com:10000/websocket"  # 실제투자 웹소켓
         
-        # Risk management - 패턴 분석 기반 최적화 + 10종목 제한
+        # Risk management - 포지션 제한 규칙 명확화 및 개선
         self.RISK_MANAGEMENT = {
             "max_position_size": 0.05,  # 전체 자산의 5% (10% → 5%)
             "position_size_ratio": 0.02,  # 계좌 잔고의 2% (5% → 2%)
@@ -206,8 +221,9 @@ class Settings:
             "min_trade_amount": 100000,  # 최소 거래 금액 (10만원) - 패턴 분석 기반
             "max_trade_amount": 500000,  # 최대 거래 금액 (50만원) - 패턴 분석 기반 추가
             "min_position_size": 1,    # 최소 주문 수량
-            "max_quantity_per_stock": 10,  # 종목당 최대 보유 수량 (10주) - 패턴 분석 기반 추가
-            "max_per_stock": 1000000   # 주식별 최대 투자 금액 (100만원)
+            # "max_quantity_per_stock": 10,  # 종목당 최대 보유 수량 (10주) - 위험한 규칙 제거
+            "max_per_stock": 500000,   # 종목당 최대 투자 금액 (50만원으로 통일)
+            "position_management": "amount_based"  # 금액 기준 포지션 관리
         }
         
         # Database settings
@@ -306,21 +322,25 @@ class Settings:
     
     def is_market_open(self) -> bool:
         """Check if market is currently open"""
-        from datetime import datetime, time
-        import pytz
+        # 24시간 동작하도록 설정 (장 시간 제한 해제)
+        return True
         
-        kst = pytz.timezone('Asia/Seoul')
-        now = datetime.now(kst)
-        current_time = now.time()
-        
-        # Check if it's a weekday
-        if now.weekday() >= 5:  # Saturday = 5, Sunday = 6
-            return False
-        
-        open_time = time(9, 0)
-        close_time = time(15, 30)
-        
-        return open_time <= current_time <= close_time
+        # 기존 장 시간 제한 코드 (주석 처리)
+        # from datetime import datetime, time
+        # import pytz
+        # 
+        # kst = pytz.timezone('Asia/Seoul')
+        # now = datetime.now(kst)
+        # current_time = now.time()
+        # 
+        # # Check if it's a weekday
+        # if now.weekday() >= 5:  # Saturday = 5, Sunday = 6
+        #     return False
+        # 
+        # open_time = time(9, 0)
+        # close_time = time(15, 30)
+        # 
+        # return open_time <= current_time <= close_time
     
     def update_token(self, token: str, environment: Optional[str] = None):
         """Update token in settings and save to file"""

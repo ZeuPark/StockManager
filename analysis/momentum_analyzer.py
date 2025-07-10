@@ -42,6 +42,11 @@ class MomentumAnalyzer:
         self.stock_data_history: Dict[str, List[StockData]] = {}
         self.max_history_size = 100  # 최대 저장할 데이터 개수
         
+    def set_order_manager(self, order_manager):
+        """주문 매니저 설정"""
+        self.order_manager = order_manager
+        logger.info("주문 매니저가 모멘텀 분석기에 연결되었습니다.")
+        
     def add_stock_data(self, stock_data: StockData):
         """주식 데이터를 히스토리에 추가"""
         if stock_data.code not in self.stock_data_history:

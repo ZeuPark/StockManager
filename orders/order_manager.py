@@ -17,6 +17,7 @@ from enum import Enum
 
 from analysis.momentum_analyzer import StockData, ConditionResult
 from analysis.volume_scanner import VolumeCandidate
+from analysis.strategy2_analyzer import Strategy2Candidate  # 전략 2 후보 추가
 from api.kiwoom_client import KiwoomClient
 from config.settings import Settings
 from database.database_manager import get_database_manager
@@ -93,24 +94,27 @@ class OrderManager:
         logger.info(f"OrderManager 초기화 완료 (자동매매: {self.auto_execute}, 거래량자동매매: {self.volume_auto_trade})")
     
     def calculate_order_quantity(self, stock_code: str, current_price: float) -> int:
-        """주문 수량 계산 (리스크 관리) - 패턴 분석 기반 최적화"""
+        """주문 수량 계산 (리스크 관리) - 금액 기준 포지션 관리"""
         try:
             # 계좌 잔고 조회
             balance = self.kiwoom_client.get_account_balance()
             available_cash = balance.get("available_cash", 0)
+            total_assets = balance.get("total_assets", available_cash)
             
-            # 최대 투자 금액 계산
-            max_investment = min(
-                available_cash * self.risk_management["position_size_ratio"],
-                self.risk_management["max_per_stock"]
-            )
+            # 다중 안전장치: 계좌 잔고 2% AND 전체 자산 5% 제한
+            max_by_cash = available_cash * self.risk_management["position_size_ratio"]  # 계좌 잔고 2%
+            max_by_assets = total_assets * self.risk_management["max_position_size"]    # 전체 자산 5%
+            max_per_stock = self.risk_management["max_per_stock"]                       # 종목당 최대 50만원
             
-            # 최소 거래 금액 체크 (패턴 분석 기반)
+            # 가장 보수적인 기준 적용
+            max_investment = min(max_by_cash, max_by_assets, max_per_stock)
+            
+            # 최소 거래 금액 체크
             if max_investment < self.risk_management["min_trade_amount"]:
                 logger.warning(f"최소 거래 금액 부족: {max_investment:,}원 < {self.risk_management['min_trade_amount']:,}원")
                 return 0
             
-            # 최대 거래 금액 체크 (패턴 분석 기반)
+            # 최대 거래 금액 체크
             max_trade_amount = self.risk_management.get("max_trade_amount", float('inf'))
             if max_investment > max_trade_amount:
                 max_investment = max_trade_amount
@@ -124,25 +128,26 @@ class OrderManager:
                 logger.warning(f"최소 주문 수량 부족: {quantity} < {self.risk_management['min_position_size']}")
                 return 0
             
-            # 최대 보유 수량 체크 (패턴 분석 기반)
-            max_quantity = self.risk_management.get("max_quantity_per_stock", float('inf'))
-            if quantity > max_quantity:
-                quantity = max_quantity
-                logger.info(f"최대 보유 수량으로 제한: {quantity}주")
-            
-            # 현재 보유 수량 체크
+            # 현재 보유 수량 체크 (금액 기준으로 관리)
             current_position = self.positions.get(stock_code)
             if current_position and current_position.quantity > 0:
-                total_quantity = current_position.quantity + quantity
-                if total_quantity > max_quantity:
-                    additional_quantity = max_quantity - current_position.quantity
-                    if additional_quantity <= 0:
-                        logger.warning(f"이미 최대 보유 수량 도달: {stock_code} ({current_position.quantity}주)")
-                        return 0
-                    quantity = additional_quantity
-                    logger.info(f"추가 매수 수량 제한: {quantity}주")
+                current_investment = current_position.quantity * current_price
+                if current_investment >= max_per_stock:
+                    logger.warning(f"이미 최대 투자 금액 도달: {stock_code} ({current_investment:,}원)")
+                    return 0
+                
+                # 추가 투자 가능 금액 계산
+                remaining_investment = max_per_stock - current_investment
+                additional_quantity = int(remaining_investment / current_price)
+                if additional_quantity <= 0:
+                    logger.warning(f"추가 투자 금액 부족: {stock_code}")
+                    return 0
+                
+                quantity = min(quantity, additional_quantity)
+                logger.info(f"추가 매수 수량 제한: {quantity}주 ({quantity * current_price:,}원)")
             
             logger.info(f"주문 수량 계산: {stock_code} - {quantity}주 ({quantity * current_price:,}원)")
+            logger.info(f"  계좌잔고기준: {max_by_cash:,}원, 전체자산기준: {max_by_assets:,}원, 종목당최대: {max_per_stock:,}원")
             return quantity
             
         except Exception as e:
@@ -191,15 +196,10 @@ class OrderManager:
                 )
                 
                 # DB에 주문 내역 저장
-                order_data = {
-                    'order_id': order.order_id,
-                    'order_type': 'BUY',
-                    'quantity': quantity,
-                    'price': current_price,
-                    'status': 'PENDING',
-                    'created_at': order.order_time
-                }
-                self.db_manager.save_order(stock_code, order_data)
+                try:
+                    self.db_manager.save_order(stock_code, order_data)
+                except Exception as e:
+                    logger.error(f"[DB] 주문 내역 저장 실패: {e}")
                 # === 거래 분석용 DB 저장 ===
                 trade = {
                     'stock_code': stock_code,
@@ -213,7 +213,11 @@ class OrderManager:
                     'profit_amount': None,
                     'result': None
                 }
-                trade_id = self.db_manager.save_trade(trade)
+                try:
+                    trade_id = self.db_manager.save_trade(trade)
+                except Exception as e:
+                    logger.error(f"[DB] trades 저장 실패: {e}")
+                    trade_id = -1
                 # 매수 시점 조건 저장
                 cond = {
                     'volume_ratio': getattr(stock_data, 'volume_ratio', None),
@@ -223,7 +227,10 @@ class OrderManager:
                     'market_cap': getattr(stock_data, 'market_cap', None)
                 }
                 if trade_id > 0:
-                    self.db_manager.save_trade_condition(trade_id, cond)
+                    try:
+                        self.db_manager.save_trade_condition(trade_id, cond)
+                    except Exception as e:
+                        logger.error(f"[DB] trade_conditions 저장 실패: {e}")
                 # === END ===
                 self.orders[stock_code] = order
                 self.daily_trades += 1
@@ -280,25 +287,31 @@ class OrderManager:
                     'status': 'PENDING',
                     'created_at': order.order_time
                 }
-                self.db_manager.save_order(stock_code, order_data)
+                try:
+                    self.db_manager.save_order(stock_code, order_data)
+                except Exception as e:
+                    logger.error(f"[DB] 주문 내역 저장 실패: {e}")
                 # === 거래 분석용 DB 업데이트 ===
                 # 가장 최근 매수 거래 찾기
-                with self.db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT id, buy_price, buy_time, quantity FROM trades WHERE stock_code=? AND sell_price IS NULL ORDER BY buy_time DESC LIMIT 1", (stock_code,))
-                    row = cursor.fetchone()
-                    if row:
-                        trade_id = row[0]
-                        buy_price = row[1]
-                        buy_time = row[2]
-                        buy_qty = row[3]
-                        profit_rate = ((price - buy_price) / buy_price) * 100 if buy_price else None
-                        profit_amount = (price - buy_price) * quantity if buy_price else None
-                        result = "익절" if profit_rate and profit_rate > 0 else "손절"
-                        cursor.execute("""
-                            UPDATE trades SET sell_price=?, sell_time=?, profit_rate=?, profit_amount=?, result=? WHERE id=?
-                        """, (price, datetime.now(), profit_rate, profit_amount, result, trade_id))
-                        conn.commit()
+                try:
+                    with self.db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT id, buy_price, buy_time, quantity FROM trades WHERE stock_code=? AND sell_price IS NULL ORDER BY buy_time DESC LIMIT 1", (stock_code,))
+                        row = cursor.fetchone()
+                        if row:
+                            trade_id = row[0]
+                            buy_price = row[1]
+                            buy_time = row[2]
+                            buy_qty = row[3]
+                            profit_rate = ((price - buy_price) / buy_price) * 100 if buy_price else None
+                            profit_amount = (price - buy_price) * quantity if buy_price else None
+                            result = "익절" if profit_rate and profit_rate > 0 else "손절"
+                            cursor.execute("""
+                                UPDATE trades SET sell_price=?, sell_time=?, profit_rate=?, profit_amount=?, result=? WHERE id=?
+                            """, (price, datetime.now(), profit_rate, profit_amount, result, trade_id))
+                            conn.commit()
+                except Exception as e:
+                    logger.error(f"[DB] trades UPDATE 실패: {e}")
                 # === END ===
                 self.orders[stock_code] = order
                 self.daily_trades += 1
@@ -572,6 +585,143 @@ class OrderManager:
         except Exception as e:
             logger.error(f"거래량 후보 처리 실패: {e}")
             return None
+
+    def handle_strategy2_candidate(self, candidate: Strategy2Candidate) -> Optional[Order]:
+        """전략 2 후보 처리"""
+        try:
+            if not self.volume_auto_trade:
+                logger.info(f"전략 2 자동매매 비활성화 - 후보 무시: {candidate.stock_code}")
+                return None
+            
+            stock_code = candidate.stock_code
+            current_price = candidate.current_price
+            current_positions = len([p for p in self.positions.values() if p.quantity > 0])
+            volume_positions = len(self.volume_positions)
+            total_positions = current_positions + volume_positions
+            
+            logger.info(f"🔍 전략 2 포지션 상태 체크 - {stock_code}: 일반:{current_positions}개, 거래량:{volume_positions}개, 총:{total_positions}개")
+            
+            if stock_code in self.volume_positions:
+                logger.info(f"이미 거래량 포지션 보유 중: {stock_code}")
+                return None
+            
+            # 전략 2 매수 조건 확인
+            if not self.check_strategy2_buy_conditions(candidate):
+                return None
+            
+            quantity = self.calculate_order_quantity(stock_code, current_price)
+            if quantity <= 0:
+                logger.info(f"주문 수량 부족: {stock_code} - {quantity}")
+                return None
+            
+            # 10종목 제한 강제
+            if not self.check_risk_limits(stock_code, OrderType.BUY, quantity, current_price):
+                logger.warning(f"🚫 10종목 제한! 매수 차단: {stock_code}")
+                return None
+            
+            logger.info(f"✅ 전략 2 리스크 한도 체크 통과: {stock_code} - 매수 진행")
+            
+            # 매수 주문 실행
+            order_result = self.kiwoom_client.place_order(
+                stock_code=stock_code,
+                order_type="매수",
+                quantity=quantity,
+                price=current_price
+            )
+            
+            # 키움 API 주문 결과 판단 (return_code: 0이 성공)
+            if order_result and order_result.get("return_code") == 0:
+                # 주문 정보 저장
+                order = Order(
+                    order_id=order_result.get("ord_no", f"STR2_ORDER_{datetime.now().timestamp()}"),
+                    stock_code=stock_code,
+                    order_type=OrderType.BUY,
+                    quantity=quantity,
+                    price=current_price,
+                    order_time=datetime.now()
+                )
+                
+                # DB에 주문 내역 저장
+                order_data = {
+                    'order_id': order.order_id,
+                    'order_type': 'BUY',
+                    'quantity': quantity,
+                    'price': current_price,
+                    'status': 'PENDING',
+                    'created_at': order.order_time
+                }
+                self.db_manager.save_order(stock_code, order_data)
+                
+                self.orders[stock_code] = order
+                self.daily_trades += 1
+                
+                # 전략 2 포지션 정보 저장
+                self.volume_positions[stock_code] = {
+                    'buy_price': current_price,
+                    'quantity': quantity,
+                    'buy_time': datetime.now(),
+                    'strategy_type': 'strategy2',
+                    'candidate_info': {
+                        'price_change': candidate.price_change,
+                        'volume_ratio': candidate.volume_ratio,
+                        'market_amount': candidate.market_amount,
+                        'confidence_score': candidate.confidence_score,
+                        'core_conditions_met': candidate.core_conditions_met,
+                        'additional_conditions_met': candidate.additional_conditions_met
+                    }
+                }
+                
+                logger.info(f"✅ 전략 2 매수 주문 성공: {stock_code} - 주문ID: {order.order_id}")
+                return order
+            else:
+                logger.error(f"❌ 전략 2 매수 주문 실패: {stock_code} - {order_result}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"전략 2 후보 처리 실패: {e}")
+            return None
+
+    def check_strategy2_buy_conditions(self, candidate: Strategy2Candidate) -> bool:
+        """전략 2 매수 조건 확인"""
+        try:
+            # 기본 조건 확인
+            if not candidate.final_signal:
+                logger.info(f"전략 2 최종 신호 불만족: {candidate.stock_name}({candidate.stock_code})")
+                return False
+            
+            # 신뢰도 점수 확인
+            min_confidence = self.settings.SYSTEM.get("min_confidence", 0.7)
+            if candidate.confidence_score < min_confidence:
+                logger.info(f"전략 2 신뢰도 점수 부족: {candidate.confidence_score:.2f} < {min_confidence}")
+                return False
+            
+            # 계좌 잔고 확인
+            balance = self.kiwoom_client.get_account_balance()
+            available_cash = balance.get("available_cash", 0)
+            min_trade_amount = self.risk_management.get("min_trade_amount", 100000)
+            
+            if available_cash < min_trade_amount:
+                logger.info(f"계좌 잔고 부족: {available_cash:,}원 < {min_trade_amount:,}원")
+                return False
+            
+            # 최소 거래 금액 확인
+            min_quantity = self.risk_management.get("min_position_size", 1)
+            trade_amount = candidate.current_price * min_quantity
+            if trade_amount < min_trade_amount:
+                logger.info(f"거래 금액 부족: {trade_amount:,}원 < {min_trade_amount:,}원")
+                return False
+            
+            logger.info(f"전략 2 매수 조건 만족: {candidate.stock_name}({candidate.stock_code})")
+            logger.info(f"  신뢰도: {candidate.confidence_score:.2f}")
+            logger.info(f"  거래금액: {trade_amount:,}원")
+            logger.info(f"  핵심조건: {'만족' if candidate.core_conditions_met else '불만족'}")
+            logger.info(f"  추가조건: {'만족' if candidate.additional_conditions_met else '불만족'}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"전략 2 매수 조건 확인 중 오류: {e}")
+            return False
     
     async def check_volume_position_profit_loss(self, stock_data: StockData):
         """거래량 포지션 손익 체크"""

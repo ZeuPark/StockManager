@@ -392,21 +392,26 @@ class VolumeScanner:
                             ma_trend = "보합추세"
                         
                         # 최적 범위 점수 계산 (분석 결과 기반)
-                        score = execution_strength
+                        # 기본 점수는 체결강도 정규화 (최대 40점)
+                        max_execution_strength = 200  # 목표 최대 체결강도
+                        min_execution_strength = 110  # 최소 체결강도 (필터 조건)
+                        normalized_strength = min(1.0, (execution_strength - min_execution_strength) / (max_execution_strength - min_execution_strength))
+                        score = normalized_strength * 40  # 최대 40점
                         
-                        # 거래량비율이 최적 범위에 있으면 +20점
-                        if (self.optimal_volume_ratio_range[0] <= volume_ratio <= self.optimal_volume_ratio_range[1]):
+                        # 거래량비율이 최적 범위에 있으면 +20점 (100% 이상이므로 100%~180% 범위)
+                        if (100.0 <= volume_ratio <= self.optimal_volume_ratio_range[1]):
                             score += 20
                             logger.info(f"[{stock_name}({stock_code})] 최적 거래량비율 범위! +20점")
                         
-                        # 거래대금이 최적 범위에 있으면 +30점
-                        if (self.optimal_trade_value_range[0] <= trade_value <= self.optimal_trade_value_range[1]):
+                        # 거래대금이 최적 범위에 있으면 +30점 (상한선 81억원 고려하여 10억~80억 범위)
+                        optimal_trade_value_max = min(self.optimal_trade_value_range[1], self.max_trade_value)
+                        if (self.optimal_trade_value_range[0] <= trade_value <= optimal_trade_value_max):
                             score += 30
                             logger.info(f"[{stock_name}({stock_code})] 최적 거래대금 범위! +30점")
                         
                         # 두 조건 모두 만족하면 추가 보너스 +10점
-                        if ((self.optimal_volume_ratio_range[0] <= volume_ratio <= self.optimal_volume_ratio_range[1]) and
-                            (self.optimal_trade_value_range[0] <= trade_value <= self.optimal_trade_value_range[1])):
+                        if ((100.0 <= volume_ratio <= self.optimal_volume_ratio_range[1]) and
+                            (self.optimal_trade_value_range[0] <= trade_value <= optimal_trade_value_max)):
                             score += 10
                             logger.info(f"[{stock_name}({stock_code})] 최적 조건 모두 만족! +10점 보너스")
                         
