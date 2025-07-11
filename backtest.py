@@ -23,6 +23,7 @@ CONFIG = {
     # 매도 조건
     'stop_loss': -2.0,            # 손절 비율 (-1.5% → -2.0%로 완화)
     'take_profit': 5.0,           # 익절 비율 (+3.0% → +5.0%로 완화)
+    'trailing_stop': 3.0,         # 트레일링 스탑 비율 (고점 대비 -3%)
     'max_hold_hours': 2,          # 최대 보유 시간 (시간) - 단축
     'max_daily_loss': -2.0,       # 일일 최대 손실 비율 (-2%로 복원)
     
@@ -31,14 +32,42 @@ CONFIG = {
     'strategy2_threshold': 0.5,   # 전략2 매수 기준 점수 (0.7 → 0.5로 낮춤)
     
     # 백테스트 설정
-    'start_date': '2025-01-08',   # 백테스트 시작일
-    'end_date': '2025-07-08',     # 백테스트 종료일 (1개월로 단축)
+    'start_date': '2024-07-08',   # 백테스트 시작일
+    'end_date': '2025-01-08',     # 백테스트 종료일 (1개월로 단축)
     'max_stocks_to_load': 100,    # 테스트용 종목 수 제한 (100개로 증가)
 }
 
 # ============================================================================
-# 2. 데이터 준비 (load_and_prepare_data)
+# 2. 데이터 준비 (load_and_prepare_data, load_market_data)
 # ============================================================================
+def load_market_data(start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    코스피 지수 데이터 로드 (시장 국면 필터용)
+    """
+    print("시장 데이터 로딩 시작...")
+    
+    try:
+        # 코스피 지수 CSV 파일 로드 (예: KOSPI_daily.csv)
+        market_file = 'market_data/KOSPI_daily.csv'
+        if os.path.exists(market_file):
+            df = pd.read_csv(market_file)
+            df['date'] = pd.to_datetime(df['date'])
+            df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+            
+            # 20일 이동평균선 계산
+            df['ma20'] = df['close'].rolling(window=20).mean()
+            
+            print(f"✓ 시장 데이터 로드 완료: {len(df)}일")
+            return df
+        else:
+            print(f"⚠️ 시장 데이터 파일이 없습니다: {market_file}")
+            print("시장 국면 필터를 사용하지 않습니다.")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        print(f"✗ 시장 데이터 로드 실패: {e}")
+        print("시장 국면 필터를 사용하지 않습니다.")
+        return pd.DataFrame()
 def load_and_prepare_data(data_folder: str = 'minute_data', max_stocks: Optional[int] = None) -> Dict[str, pd.DataFrame]:
     """
     지정된 폴더의 모든 CSV 파일을 로드하고 전략에 필요한 지표를 계산
@@ -203,7 +232,7 @@ def run_backtest(stock_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, List[Dict]]
     
     # 초기 상태 설정
     cash = CONFIG['initial_capital']
-    portfolio = {}  # {stock_code: {'shares': int, 'buy_price': float, 'buy_time': datetime}}
+    portfolio = {}  # {stock_code: {'shares': int, 'buy_price': float, 'buy_time': datetime, 'peak_price': float}}
     trades = []
     previous_date = None  # 이전 날짜 추적
     
@@ -277,15 +306,24 @@ def run_backtest(stock_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, List[Dict]]
                 buy_price = position['buy_price']
                 buy_time = position['buy_time']
                 
-                # 손절/익절 체크
+                # 고점 가격 업데이트
+                if current_price > position['peak_price']:
+                    position['peak_price'] = current_price
+                
+                # 손절/익절/트레일링 스탑 체크
                 profit_pct = (current_price - buy_price) / buy_price * 100
                 hold_hours = (current_datetime - buy_time).total_seconds() / 3600
+                
+                # 트레일링 스탑 계산
+                trailing_stop_price = position['peak_price'] * (1 - CONFIG['trailing_stop'] / 100)
                 
                 sell_reason = None
                 if profit_pct <= CONFIG['stop_loss']:
                     sell_reason = '손절'
                 elif profit_pct >= CONFIG['take_profit']:
                     sell_reason = '익절'
+                elif current_price <= trailing_stop_price and profit_pct > 0:
+                    sell_reason = '트레일링스탑'
                 elif hold_hours >= CONFIG['max_hold_hours']:
                     sell_reason = '시간초과'
                 
@@ -380,7 +418,25 @@ def run_backtest(stock_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, List[Dict]]
                         continue
                     
                     current_price = current_price_data.iloc[0]['close']
-                    shares = CONFIG['position_size'] // current_price
+                    
+                    # 동적 포지션 사이징: 점수에 따른 투자 금액 조정
+                    base_position_size = CONFIG['position_size']
+                    if signal['strategy'] == 'Strategy1':
+                        # 전략1은 점수가 100이므로 최대 투자
+                        position_size = base_position_size
+                    elif signal['strategy'] == 'Strategy2':
+                        # 전략2는 점수에 따라 투자 금액 조정
+                        score = signal['score']
+                        if score >= 0.8:
+                            position_size = base_position_size  # 최대 투자
+                        elif score >= 0.6:
+                            position_size = base_position_size * 0.7  # 70% 투자
+                        else:
+                            position_size = base_position_size * 0.5  # 50% 투자
+                    else:
+                        position_size = base_position_size
+                    
+                    shares = position_size // current_price
                     
                     if shares > 0 and cash >= shares * current_price:
                         # 매수 실행
@@ -389,7 +445,8 @@ def run_backtest(stock_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, List[Dict]]
                         portfolio[stock_code] = {
                             'shares': shares,
                             'buy_price': current_price,
-                            'buy_time': current_datetime
+                            'buy_time': current_datetime,
+                            'peak_price': current_price  # 고점 가격 초기화
                         }
                         
                         # 거래 기록
@@ -404,8 +461,8 @@ def run_backtest(stock_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, List[Dict]]
                             'cash': cash
                         })
                         
-                        # 매수 로그 출력 (간결하게)
-                        print(f"  매수: {stock_code} {signal['strategy']}")
+                        # 매수 로그 출력 (투자 금액 포함)
+                        print(f"  매수: {stock_code} {signal['strategy']} ({position_size:,}원)")
         
         # 장 마감 시 미청산 포지션 강제 매도
         market_close_time = datetime.strptime('15:30', '%H:%M').time()
