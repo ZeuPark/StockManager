@@ -318,6 +318,101 @@ def check_strategy_3(df_slice: pd.DataFrame) -> Optional[float]:
         return total_score
     return None
 
+# 개선된 스윙 트레이딩 전략 추가
+def improved_swing_strategy(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+    """
+    수익성 분석 결과 기반 개선된 스윙 트레이딩 전략
+    
+    핵심 개선사항:
+    1. 이동평균 정배열 필터 강화 (59.5% 고수익 종목이 정배열)
+    2. 변동성 기반 필터링 (0.29% 이하 선호)
+    3. RSI 중립 구간 활용 (40-70)
+    4. 거래량 비율 기반 확인
+    """
+    # 컬럼명 확인 및 안전 처리
+    if 'close' not in df.columns:
+        print(f"경고: 'close' 컬럼이 없습니다. 사용 가능한 컬럼: {list(df.columns)}")
+        return df
+    
+    # 기술적 지표 계산
+    df = df.copy()
+    
+    # 이동평균선 (이미 있는 경우 재계산하지 않음)
+    if 'ma5' not in df.columns:
+        df['ma5'] = df['close'].rolling(window=5).mean()
+    if 'ma20' not in df.columns:
+        df['ma20'] = df['close'].rolling(window=20).mean()
+    if 'ma60' not in df.columns:
+        df['ma60'] = df['close'].rolling(window=60).mean()
+    
+    # 변동성
+    if 'volatility' not in df.columns:
+        df['volatility'] = df['close'].rolling(window=20).std() / df['close'].rolling(window=20).mean() * 100
+    
+    # RSI
+    if 'rsi' not in df.columns:
+        df['rsi'] = calculate_rsi(df['close'], 14)
+    
+    # ATR
+    df['atr'] = calculate_atr(df, 14)
+    
+    # 거래량 비율
+    df['volume_ma20'] = df['volume'].rolling(window=20).mean()
+    df['volume_ratio'] = df['volume'] / df['volume_ma20']
+    df['volume_ratio'] = df['volume_ratio'].fillna(1.0)
+    
+    # 이동평균 정배열 점수 계산 (0-3점)
+    df['ma_alignment'] = 0
+    full_alignment = (df['ma5'] > df['ma20']) & (df['ma20'] > df['ma60'])
+    partial_alignment = (df['ma5'] > df['ma20']) & ~full_alignment
+    long_alignment = (df['ma20'] > df['ma60']) & ~full_alignment & ~partial_alignment
+    
+    df.loc[full_alignment, 'ma_alignment'] = 3
+    df.loc[partial_alignment, 'ma_alignment'] = 2
+    df.loc[long_alignment, 'ma_alignment'] = 1
+    
+    # 매수 신호 생성
+    df['buy_signal'] = False
+    
+    # 핵심 필터 (수익성 분석 결과 기반)
+    ma_alignment_ok = df['ma_alignment'] >= params.get('ma_alignment_min', 1.8)
+    volatility_ok = df['volatility'] <= params.get('volatility_max', 0.35)
+    rsi_ok = (df['rsi'] >= params.get('rsi_min', 40)) & (df['rsi'] <= params.get('rsi_max', 70))
+    volume_ok = df['volume_ratio'] >= params.get('volume_ratio_min', 1.0)
+    
+    # 추가 조건
+    price_above_ma = df['close'] > df['ma20']
+    volume_increase = df['volume'] > df['volume_ma20']
+    
+    # 모든 조건 만족 시 매수
+    df['buy_signal'] = (ma_alignment_ok & volatility_ok & rsi_ok & 
+                       volume_ok & price_above_ma & volume_increase)
+    
+    # 매도 신호 생성
+    df['sell_signal'] = False
+    
+    # 익절/손절 조건
+    df['return_pct'] = df['close'].pct_change() * 100
+    df['cumulative_return'] = df['return_pct'].cumsum()
+    
+    # 익절 조건
+    take_profit = params.get('take_profit_pct', 15.0)
+    stop_loss = params.get('stop_loss_pct', 5.0)
+    
+    # 정배열 깨짐 조건
+    alignment_broken = df['ma_alignment'] < 1
+    
+    # RSI 과매수 조건
+    rsi_overbought = df['rsi'] > 80
+    
+    # 매도 신호
+    df['sell_signal'] = (df['cumulative_return'] >= take_profit) | \
+                       (df['cumulative_return'] <= -stop_loss) | \
+                       alignment_broken | \
+                       rsi_overbought
+    
+    return df
+
 # ============================================================================
 # 5. 고급 백테스팅 엔진
 # ============================================================================
@@ -750,19 +845,15 @@ def analyze_advanced_results(results: Dict, trades: List[Dict]) -> None:
 
 def optimize_parameters(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None) -> Dict:
     """
-    파라미터 최적화: 여러 파라미터 조합을 테스트하여 최적의 설정을 찾음
+    파라미터 최적화: 단일 파라미터 테스트 (데이터 캐싱 적용)
     """
     print("\n" + "="*60)
-    print("파라미터 최적화 시작")
+    print("파라미터 최적화 시작 (데이터 캐싱 적용)")
     print("="*60)
     
-    # 최적화할 파라미터 범위 정의
+    # 최적화할 파라미터 범위 정의 (단일 파라미터 테스트)
     param_ranges = {
-        'atr_multiplier_stop': [1.0, 1.5, 2.0, 2.5, 3.0],
-        'atr_multiplier_profit': [2.0, 3.0, 4.0, 5.0, 6.0],
-        'trailing_stop': [3.0, 5.0, 7.0, 10.0, 15.0],
-        'max_hold_days': [7, 10, 14, 21, 30],
-        'risk_per_trade': [0.01, 0.02, 0.03, 0.05, 0.08]
+        'atr_multiplier_stop': [1.5, 2.0, 2.5, 3.0]
     }
     
     best_result = None
@@ -777,77 +868,64 @@ def optimize_parameters(stock_data: Dict[str, pd.DataFrame], market_data: pd.Dat
     
     combination_count = 0
     
-    # 모든 조합 테스트
+    # 단일 파라미터 테스트
     for atr_stop in param_ranges['atr_multiplier_stop']:
-        for atr_profit in param_ranges['atr_multiplier_profit']:
-            for trailing in param_ranges['trailing_stop']:
-                for hold_days in param_ranges['max_hold_days']:
-                    for risk in param_ranges['risk_per_trade']:
-                        combination_count += 1
+        combination_count += 1
+        
+        # CONFIG 임시 수정
+        original_config = CONFIG.copy()
+        CONFIG['atr_multiplier_stop'] = atr_stop
                         
-                        # CONFIG 임시 수정
-                        original_config = CONFIG.copy()
-                        CONFIG['atr_multiplier_stop'] = atr_stop
-                        CONFIG['atr_multiplier_profit'] = atr_profit
-                        CONFIG['trailing_stop'] = trailing
-                        CONFIG['max_hold_days'] = hold_days
-                        CONFIG['risk_per_trade'] = risk
-                        
-                        try:
-                            # 백테스트 실행
-                            results, trades = run_advanced_backtest(stock_data, market_data)
-                            
-                            # 성과 점수 계산 (수익률 + 샤프비율 + 승률의 조합)
-                            total_return = results['total_return']
-                            total_trades = results['total_trades']
-                            
-                            if total_trades > 0:
-                                # 승률 계산
-                                sell_trades = len([t for t in trades if t['action'] == 'SELL'])
-                                profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
-                                win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
-                                
-                                # 샤프 비율 계산 (간단한 버전)
-                                capital_history = [CONFIG['initial_capital']]
-                                for trade in trades:
-                                    capital_history.append(trade['cash'])
-                                
-                                returns = []
-                                for i in range(1, len(capital_history)):
-                                    daily_return = (capital_history[i] - capital_history[i-1]) / capital_history[i-1]
-                                    returns.append(daily_return)
-                                
-                                sharpe_ratio = 0
-                                if returns:
-                                    avg_return = np.mean(returns)
-                                    std_return = np.std(returns)
-                                    if std_return > 0:
-                                        sharpe_ratio = avg_return / std_return * np.sqrt(252)
-                                
-                                # 종합 점수 (수익률 50% + 샤프비율 30% + 승률 20%)
-                                score = (total_return * 0.5) + (sharpe_ratio * 10 * 0.3) + (win_rate * 0.2)
-                                
-                                if score > best_score:
-                                    best_score = score
-                                    best_result = results
-                                    best_params = {
-                                        'atr_multiplier_stop': atr_stop,
-                                        'atr_multiplier_profit': atr_profit,
-                                        'trailing_stop': trailing,
-                                        'max_hold_days': hold_days,
-                                        'risk_per_trade': risk
-                                    }
-                                
-                                if combination_count % 10 == 0:
-                                    print(f"진행률: {combination_count}/{total_combinations} - 현재 최고점수: {best_score:.2f}")
-                        
-                        except Exception as e:
-                            print(f"조합 {combination_count} 실행 중 오류: {e}")
-                            continue
-                        
-                        finally:
-                            # CONFIG 복원
-                            CONFIG.update(original_config)
+        try:
+            # 백테스트 실행
+            results, trades = run_advanced_backtest(stock_data, market_data)
+            
+            # 성과 점수 계산 (수익률 + 샤프비율 + 승률의 조합)
+            total_return = results['total_return']
+            total_trades = results['total_trades']
+            
+            if total_trades > 0:
+                # 승률 계산
+                sell_trades = len([t for t in trades if t['action'] == 'SELL'])
+                profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
+                win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
+                
+                # 샤프 비율 계산 (간단한 버전)
+                capital_history = [CONFIG['initial_capital']]
+                for trade in trades:
+                    capital_history.append(trade['cash'])
+                
+                returns = []
+                for i in range(1, len(capital_history)):
+                    daily_return = (capital_history[i] - capital_history[i-1]) / capital_history[i-1]
+                    returns.append(daily_return)
+                
+                sharpe_ratio = 0
+                if returns:
+                    avg_return = np.mean(returns)
+                    std_return = np.std(returns)
+                    if std_return > 0:
+                        sharpe_ratio = avg_return / std_return * np.sqrt(252)
+                
+                # 종합 점수 (수익률 50% + 샤프비율 30% + 승률 20%)
+                score = (total_return * 0.5) + (sharpe_ratio * 10 * 0.3) + (win_rate * 0.2)
+                
+                if score > best_score:
+                    best_score = score
+                    best_result = results
+                    best_params = {
+                        'atr_multiplier_stop': atr_stop
+                    }
+                
+                print(f"ATR Stop {atr_stop}: 점수 {score:.2f} (수익률: {total_return:.2f}%, 승률: {win_rate:.1f}%)")
+    
+        except Exception as e:
+            print(f"ATR Stop {atr_stop} 실행 중 오류: {e}")
+            continue
+        
+        finally:
+            # CONFIG 복원
+            CONFIG.update(original_config)
     
     print(f"\n최적화 완료!")
     print(f"최고 점수: {best_score:.2f}")
@@ -857,26 +935,644 @@ def optimize_parameters(stock_data: Dict[str, pd.DataFrame], market_data: pd.Dat
     
     return best_params, best_result
 
+def run_improved_swing_backtest(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None) -> Tuple[Dict, List[Dict]]:
+    """
+    개선된 스윙 트레이딩 전략으로 백테스트 실행
+    """
+    print("개선된 스윙 트레이딩 전략 백테스트 시작...")
+    
+    # 개선된 파라미터 (수익성 분석 결과 기반)
+    improved_params = {
+        'ma_alignment_min': 3.0,      # 정배열 조건 극단 강화 (3점만)
+        'volatility_max': 0.2,       # 변동성 제한 극단 강화 (0.2 이하만)
+        'rsi_min': 50,               # RSI 하한 극단 강화 (50 이상)
+        'rsi_max': 60,               # RSI 상한 극단 강화 (60 이하)
+        'volume_ratio_min': 1.5,     # 거래량 조건 극단 강화 (1.5 이상)
+        'take_profit_pct': 10.0,     # 익절 목표 단축 (10%)
+        'stop_loss_pct': 3.0,        # 손절 범위 극단 축소 (3%)
+        'atr_multiplier_stop': 1.0,  # ATR 손절 배수 극단 축소 (1.0)
+    }
+    
+    print("📊 개선된 파라미터:")
+    for key, value in improved_params.items():
+        print(f"  • {key}: {value}")
+    
+    # 개선된 전략으로 백테스트 실행
+    cash = CONFIG['initial_capital']
+    portfolio = {}
+    trades = []
+    
+    # 전체 시간 범위 생성
+    all_dates = set()
+    for df in stock_data.values():
+        all_dates.update(df['datetime'].dt.date)
+    
+    all_dates = sorted(list(all_dates))
+    start_date = datetime.strptime(CONFIG['start_date'], '%Y-%m-%d').date()
+    end_date = datetime.strptime(CONFIG['end_date'], '%Y-%m-%d').date()
+    
+    test_dates = [d for d in all_dates if start_date <= d <= end_date]
+    
+    print(f"백테스트 기간: {test_dates[0]} ~ {test_dates[-1]} ({len(test_dates)}일)")
+    
+    for current_date in test_dates:
+        progress = (test_dates.index(current_date)+1) / len(test_dates) * 100
+        if test_dates.index(current_date) % 10 == 0:
+            print(f"진행 중: {current_date} ({test_dates.index(current_date)+1}/{len(test_dates)}) - {progress:.1f}%")
+        
+        # 해당 날짜의 데이터 수집
+        minute_data = {}
+        for stock_code, df in stock_data.items():
+            day_data = df[df['datetime'].dt.date == current_date]
+            if len(day_data) > 0:
+                minute_data[stock_code] = day_data.sort_values('datetime')
+        
+        if not minute_data:
+            continue
+        
+        all_times = set()
+        for df in minute_data.values():
+            all_times.update(df['datetime'].dt.time)
+        
+        all_times = sorted(list(all_times))
+        scan_interval = 10  # 10분 간격으로 스캔 (매분 → 10분)
+        filtered_times = [t for i, t in enumerate(all_times) if i % scan_interval == 0]
+        
+        for current_time in filtered_times:
+            current_datetime = datetime.combine(current_date, current_time)
+            
+            # 매도 체크
+            stocks_to_sell = []
+            for stock_code, position in portfolio.items():
+                if stock_code not in minute_data:
+                    continue
+                
+                current_data = minute_data[stock_code]
+                current_price_data = current_data[current_data['datetime'] == current_datetime]
+                
+                if len(current_price_data) == 0:
+                    continue
+                
+                current_price = current_price_data.iloc[0]['close']
+                buy_price = position['buy_price']
+                
+                # 개선된 전략으로 매도 신호 확인
+                df_slice = current_data[current_data['datetime'] <= current_datetime]
+                if len(df_slice) > 0:
+                    # 개선된 전략 적용
+                    df_with_signals = improved_swing_strategy(df_slice, improved_params)
+                    current_signal = df_with_signals.iloc[-1]
+                    
+                    if current_signal['sell_signal']:
+                        sell_price = current_price * (1 - CONFIG['slippage'])
+                        profit_pct = (sell_price - buy_price) / buy_price * 100
+                        stocks_to_sell.append((stock_code, '개선된전략', sell_price, profit_pct))
+            
+            # 매도 실행
+            for stock_code, reason, sell_price, profit_pct in stocks_to_sell:
+                position = portfolio[stock_code]
+                shares = position['shares']
+                
+                proceeds = shares * sell_price * (1 - CONFIG['transaction_fee'] - CONFIG['transaction_tax'])
+                cash += proceeds
+                
+                trades.append({
+                    'datetime': current_datetime,
+                    'stock_code': stock_code,
+                    'action': 'SELL',
+                    'reason': reason,
+                    'shares': shares,
+                    'price': sell_price,
+                    'profit_pct': profit_pct,
+                    'cash': cash
+                })
+                
+                del portfolio[stock_code]
+                
+                if abs(profit_pct) > 2.0:
+                    print(f"  매도: {stock_code} {reason} ({profit_pct:.2f}%)")
+            
+            # 매수 체크
+            if len(portfolio) < CONFIG['max_positions']:
+                buy_signals = []
+                
+                for stock_code, df in minute_data.items():
+                    if stock_code in portfolio:
+                        continue
+                    
+                    # 개선된 전략으로 매수 신호 확인
+                    df_slice = df[df['datetime'] <= current_datetime]
+                    if len(df_slice) > 0:
+                        df_with_signals = improved_swing_strategy(df_slice, improved_params)
+                        current_signal = df_with_signals.iloc[-1]
+                        
+                        if current_signal['buy_signal']:
+                            buy_signals.append({
+                                'stock_code': stock_code,
+                                'strategy': 'Improved_Swing',
+                                'score': current_signal['ma_alignment'],
+                                'priority': 1
+                            })
+                
+                buy_signals.sort(key=lambda x: -x['score'])
+                
+                for signal in buy_signals:
+                    if len(portfolio) >= CONFIG['max_positions']:
+                        break
+                    
+                    stock_code = signal['stock_code']
+                    current_price_data = minute_data[stock_code][minute_data[stock_code]['datetime'] == current_datetime]
+                    
+                    if len(current_price_data) == 0:
+                        continue
+                    
+                    current_price = current_price_data.iloc[0]['close']
+                    buy_price_with_slippage = current_price * (1 + CONFIG['slippage'])
+                    
+                    # 포지션 사이징
+                    shares = int(CONFIG['position_size'] / buy_price_with_slippage)
+                    
+                    if shares > 0:
+                        total_cost = shares * buy_price_with_slippage * (1 + CONFIG['transaction_fee'])
+                        
+                        if cash >= total_cost:
+                            cash -= total_cost
+                            
+                            portfolio[stock_code] = {
+                                'shares': shares,
+                                'buy_price': buy_price_with_slippage,
+                                'buy_time': current_datetime,
+                                'peak_price': buy_price_with_slippage
+                            }
+                            
+                            trades.append({
+                                'datetime': current_datetime,
+                                'stock_code': stock_code,
+                                'action': 'BUY',
+                                'reason': signal['strategy'],
+                                'shares': shares,
+                                'price': buy_price_with_slippage,
+                                'score': signal['score'],
+                                'cash': cash
+                            })
+                            
+                            print(f"  매수: {stock_code} {signal['strategy']} (정배열점수: {signal['score']})")
+    
+    # 최종 결과 계산
+    final_cash = cash
+    for stock_code, position in portfolio.items():
+        if stock_code in stock_data:
+            last_price = stock_data[stock_code]['close'].iloc[-1]
+            sell_price = last_price * (1 - CONFIG['slippage'])
+            proceeds = position['shares'] * sell_price * (1 - CONFIG['transaction_fee'] - CONFIG['transaction_tax'])
+            final_cash += proceeds
+    
+    results = {
+        'initial_capital': CONFIG['initial_capital'],
+        'final_capital': final_cash,
+        'total_return': (final_cash - CONFIG['initial_capital']) / CONFIG['initial_capital'] * 100,
+        'total_trades': len(trades),
+        'buy_trades': len([t for t in trades if t['action'] == 'BUY']),
+        'sell_trades': len([t for t in trades if t['action'] == 'SELL']),
+        'trades': trades
+    }
+    
+    return results, trades
+
 def run_optimized_backtest(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None) -> Tuple[Dict, List[Dict]]:
     """
     최적화된 파라미터로 백테스트 실행
     """
     print("최적화된 파라미터로 백테스트 실행...")
     
-    # 파라미터 최적화 실행
-    best_params, _ = optimize_parameters(stock_data, market_data)
+    # 파라미터 최적화 실행 (최적 파라미터와 결과를 함께 받음)
+    best_params, best_result = optimize_parameters(stock_data, market_data)
     
     # 최적 파라미터로 CONFIG 업데이트
     CONFIG.update(best_params)
     
-    print(f"\n최적화된 설정으로 백테스트 실행:")
+    print(f"\n최적화된 설정:")
     for param, value in best_params.items():
         print(f"  {param}: {value}")
     
-    # 최적화된 파라미터로 백테스트 실행
-    results, trades = run_advanced_backtest(stock_data, market_data)
+    # 최적화 과정에서 이미 얻은 결과를 반환
+    return best_result, best_result['trades']
+
+# ============================================================================
+# 8. 고급 최적화 알고리즘
+# ============================================================================
+
+def random_search_optimization(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None, n_iterations: int = 50) -> Dict:
+    """
+    랜덤 서치 최적화: 지정된 횟수만큼 랜덤한 파라미터 조합을 테스트
+    """
+    print("\n" + "="*60)
+    print(f"랜덤 서치 최적화 시작 ({n_iterations}회 반복)")
+    print("="*60)
     
-    return results, trades
+    # 파라미터 범위 정의
+    param_ranges = {
+        'atr_multiplier_stop': (1.0, 4.0),
+        'atr_multiplier_profit': (2.0, 8.0),
+        'trailing_stop': (3.0, 15.0),
+        'max_hold_days': (7, 30),
+        'risk_per_trade': (0.01, 0.08)
+    }
+    
+    best_result = None
+    best_params = None
+    best_score = float('-inf')
+    
+    print(f"총 {n_iterations}회 랜덤 테스트 중...")
+    
+    for i in range(n_iterations):
+        # 랜덤 파라미터 생성
+        random_params = {}
+        for param, (min_val, max_val) in param_ranges.items():
+            if isinstance(min_val, int):
+                random_params[param] = random.randint(min_val, max_val)
+            else:
+                random_params[param] = round(random.uniform(min_val, max_val), 2)
+        
+        # CONFIG 임시 수정
+        original_config = CONFIG.copy()
+        CONFIG.update(random_params)
+        
+        try:
+            # 백테스트 실행
+            results, trades = run_advanced_backtest(stock_data, market_data)
+            
+            # 성과 점수 계산
+            total_return = results['total_return']
+            total_trades = results['total_trades']
+            
+            if total_trades > 0:
+                # 승률 계산
+                sell_trades = len([t for t in trades if t['action'] == 'SELL'])
+                profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
+                win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
+                
+                # 샤프 비율 계산
+                capital_history = [CONFIG['initial_capital']]
+                for trade in trades:
+                    capital_history.append(trade['cash'])
+                
+                returns = []
+                for j in range(1, len(capital_history)):
+                    daily_return = (capital_history[j] - capital_history[j-1]) / capital_history[j-1]
+                    returns.append(daily_return)
+                
+                sharpe_ratio = 0
+                if returns:
+                    avg_return = np.mean(returns)
+                    std_return = np.std(returns)
+                    if std_return > 0:
+                        sharpe_ratio = avg_return / std_return * np.sqrt(252)
+                
+                # 종합 점수
+                score = (total_return * 0.5) + (sharpe_ratio * 10 * 0.3) + (win_rate * 0.2)
+                
+                if score > best_score:
+                    best_score = score
+                    best_result = results
+                    best_params = random_params.copy()
+                
+                if (i + 1) % 10 == 0:
+                    print(f"진행률: {i+1}/{n_iterations} - 현재 최고점수: {best_score:.2f}")
+                    print(f"  최고 파라미터: {best_params}")
+        
+        except Exception as e:
+            print(f"반복 {i+1} 실행 중 오류: {e}")
+            continue
+        
+        finally:
+            # CONFIG 복원
+            CONFIG.update(original_config)
+    
+    print(f"\n랜덤 서치 최적화 완료!")
+    print(f"최고 점수: {best_score:.2f}")
+    print(f"최적 파라미터:")
+    for param, value in best_params.items():
+        print(f"  {param}: {value}")
+    
+    return best_params, best_result
+
+def stepwise_optimization(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None) -> Dict:
+    """
+    단계별 최적화: 파라미터를 하나씩 순차적으로 최적화
+    """
+    print("\n" + "="*60)
+    print("단계별 최적화 시작")
+    print("="*60)
+    
+    # 최적화할 파라미터 순서 (중요도 순)
+    param_sequence = [
+        ('atr_multiplier_stop', [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]),
+        ('atr_multiplier_profit', [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
+        ('trailing_stop', [3.0, 5.0, 7.0, 10.0, 12.0, 15.0]),
+        ('max_hold_days', [7, 10, 14, 21, 28, 30]),
+        ('risk_per_trade', [0.01, 0.02, 0.03, 0.05, 0.08])
+    ]
+    
+    best_params = {}
+    
+    for param_name, param_values in param_sequence:
+        print(f"\n{param_name} 최적화 중...")
+        
+        best_value = None
+        best_score = float('-inf')
+        best_result = None
+        
+        for value in param_values:
+            # 현재까지의 최적 파라미터 + 새로운 값으로 테스트
+            test_params = best_params.copy()
+            test_params[param_name] = value
+            
+            # CONFIG 임시 수정
+            original_config = CONFIG.copy()
+            CONFIG.update(test_params)
+            
+            try:
+                # 백테스트 실행
+                results, trades = run_advanced_backtest(stock_data, market_data)
+                
+                # 성과 점수 계산
+                total_return = results['total_return']
+                total_trades = results['total_trades']
+                
+                if total_trades > 0:
+                    # 승률 계산
+                    sell_trades = len([t for t in trades if t['action'] == 'SELL'])
+                    profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
+                    win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
+                    
+                    # 샤프 비율 계산
+                    capital_history = [CONFIG['initial_capital']]
+                    for trade in trades:
+                        capital_history.append(trade['cash'])
+                    
+                    returns = []
+                    for j in range(1, len(capital_history)):
+                        daily_return = (capital_history[j] - capital_history[j-1]) / capital_history[j-1]
+                        returns.append(daily_return)
+                    
+                    sharpe_ratio = 0
+                    if returns:
+                        avg_return = np.mean(returns)
+                        std_return = np.std(returns)
+                        if std_return > 0:
+                            sharpe_ratio = avg_return / std_return * np.sqrt(252)
+                    
+                    # 종합 점수
+                    score = (total_return * 0.5) + (sharpe_ratio * 10 * 0.3) + (win_rate * 0.2)
+                    
+                    print(f"  {param_name}={value}: 점수 {score:.2f} (수익률: {total_return:.2f}%, 승률: {win_rate:.1f}%)")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_value = value
+                        best_result = results
+            
+            except Exception as e:
+                print(f"  {param_name}={value} 실행 중 오류: {e}")
+                continue
+            
+            finally:
+                # CONFIG 복원
+                CONFIG.update(original_config)
+        
+        # 최적 값 저장
+        best_params[param_name] = best_value
+        print(f"✓ {param_name} 최적값: {best_value} (점수: {best_score:.2f})")
+    
+    print(f"\n단계별 최적화 완료!")
+    print(f"최종 파라미터:")
+    for param, value in best_params.items():
+        print(f"  {param}: {value}")
+    
+    return best_params, best_result
+
+def coarse_fine_optimization(stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None) -> Dict:
+    """
+    Coarse-Fine 최적화: 넓은 범위 → 좁은 범위 순차 탐색
+    """
+    print("\n" + "="*60)
+    print("Coarse-Fine 최적화 시작")
+    print("="*60)
+    
+    # 1단계: Coarse Search (넓은 범위)
+    print("1단계: Coarse Search (넓은 범위 탐색)")
+    coarse_ranges = {
+        'atr_multiplier_stop': [1.0, 2.0, 3.0, 4.0],
+        'atr_multiplier_profit': [2.0, 4.0, 6.0, 8.0],
+        'trailing_stop': [5.0, 10.0, 15.0],
+        'max_hold_days': [10, 20, 30],
+        'risk_per_trade': [0.02, 0.05, 0.08]
+    }
+    
+    best_coarse_params = {}
+    
+    for param_name, param_values in coarse_ranges.items():
+        print(f"\n{param_name} Coarse Search...")
+        
+        best_value = None
+        best_score = float('-inf')
+        
+        for value in param_values:
+            # 단일 파라미터 테스트
+            test_params = best_coarse_params.copy()
+            test_params[param_name] = value
+            
+            # CONFIG 임시 수정
+            original_config = CONFIG.copy()
+            CONFIG.update(test_params)
+            
+            try:
+                results, trades = run_advanced_backtest(stock_data, market_data)
+                
+                total_return = results['total_return']
+                total_trades = results['total_trades']
+                
+                if total_trades > 0:
+                    sell_trades = len([t for t in trades if t['action'] == 'SELL'])
+                    profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
+                    win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
+                    
+                    score = total_return * 0.7 + win_rate * 0.3  # 간단한 점수
+                    
+                    print(f"  {param_name}={value}: 점수 {score:.2f} (수익률: {total_return:.2f}%)")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_value = value
+            
+            except Exception as e:
+                print(f"  {param_name}={value} 실행 중 오류: {e}")
+                continue
+            
+            finally:
+                CONFIG.update(original_config)
+        
+        best_coarse_params[param_name] = best_value
+        print(f"✓ {param_name} Coarse 최적값: {best_value}")
+    
+    # 2단계: Fine Search (좁은 범위)
+    print(f"\n2단계: Fine Search (좁은 범위 탐색)")
+    print(f"Coarse 결과: {best_coarse_params}")
+    
+    fine_ranges = {}
+    for param_name, best_value in best_coarse_params.items():
+        if param_name == 'atr_multiplier_stop':
+            fine_ranges[param_name] = [max(1.0, best_value - 0.5), best_value - 0.25, best_value, best_value + 0.25, min(5.0, best_value + 0.5)]
+        elif param_name == 'atr_multiplier_profit':
+            fine_ranges[param_name] = [max(1.0, best_value - 1.0), best_value - 0.5, best_value, best_value + 0.5, min(10.0, best_value + 1.0)]
+        elif param_name == 'trailing_stop':
+            fine_ranges[param_name] = [max(2.0, best_value - 2.0), best_value - 1.0, best_value, best_value + 1.0, min(20.0, best_value + 2.0)]
+        elif param_name == 'max_hold_days':
+            fine_ranges[param_name] = [max(5, best_value - 5), best_value - 2, best_value, best_value + 2, min(40, best_value + 5)]
+        elif param_name == 'risk_per_trade':
+            fine_ranges[param_name] = [max(0.005, best_value - 0.01), best_value - 0.005, best_value, best_value + 0.005, min(0.1, best_value + 0.01)]
+    
+    best_fine_params = {}
+    
+    for param_name, param_values in fine_ranges.items():
+        print(f"\n{param_name} Fine Search...")
+        
+        best_value = None
+        best_score = float('-inf')
+        best_result = None
+        
+        for value in param_values:
+            test_params = best_fine_params.copy()
+            test_params[param_name] = value
+            
+            original_config = CONFIG.copy()
+            CONFIG.update(test_params)
+            
+            try:
+                results, trades = run_advanced_backtest(stock_data, market_data)
+                
+                total_return = results['total_return']
+                total_trades = results['total_trades']
+                
+                if total_trades > 0:
+                    sell_trades = len([t for t in trades if t['action'] == 'SELL'])
+                    profitable_trades = len([t for t in trades if t['action'] == 'SELL' and t.get('profit_pct', 0) > 0])
+                    win_rate = profitable_trades / sell_trades if sell_trades > 0 else 0
+                    
+                    # 샤프 비율 계산
+                    capital_history = [CONFIG['initial_capital']]
+                    for trade in trades:
+                        capital_history.append(trade['cash'])
+                    
+                    returns = []
+                    for j in range(1, len(capital_history)):
+                        daily_return = (capital_history[j] - capital_history[j-1]) / capital_history[j-1]
+                        returns.append(daily_return)
+                    
+                    sharpe_ratio = 0
+                    if returns:
+                        avg_return = np.mean(returns)
+                        std_return = np.std(returns)
+                        if std_return > 0:
+                            sharpe_ratio = avg_return / std_return * np.sqrt(252)
+                    
+                    score = (total_return * 0.5) + (sharpe_ratio * 10 * 0.3) + (win_rate * 0.2)
+                    
+                    print(f"  {param_name}={value:.3f}: 점수 {score:.2f} (수익률: {total_return:.2f}%, 승률: {win_rate:.1f}%)")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_value = value
+                        best_result = results
+            
+            except Exception as e:
+                print(f"  {param_name}={value} 실행 중 오류: {e}")
+                continue
+            
+            finally:
+                CONFIG.update(original_config)
+        
+        best_fine_params[param_name] = best_value
+        print(f"✓ {param_name} Fine 최적값: {best_value:.3f}")
+    
+    print(f"\nCoarse-Fine 최적화 완료!")
+    print(f"최종 파라미터:")
+    for param, value in best_fine_params.items():
+        print(f"  {param}: {value}")
+    
+    return best_fine_params, best_result
+
+def show_menu():
+    """
+    메뉴 표시 및 선택
+    """
+    print("\n" + "="*60)
+    print("고급 백테스트 시스템")
+    print("="*60)
+    print("1. 일반 모드 (최적화 없음) - 빠른 테스트")
+    print("2. 개선된 스윙 트레이딩 전략 - 수익성 분석 기반")
+    print("3. 랜덤 서치 최적화 - 30회 랜덤 조합")
+    print("4. 단계별 최적화 - 파라미터 순차 최적화")
+    print("5. Coarse-Fine 최적화 - 넓은 범위 → 좁은 범위")
+    print("6. 설정 보기")
+    print("0. 종료")
+    print("="*60)
+    
+    while True:
+        try:
+            choice = input("선택하세요 (0-6): ").strip()
+            if choice in ['0', '1', '2', '3', '4', '5', '6']:
+                return choice
+            else:
+                print("잘못된 선택입니다. 0-6 사이의 숫자를 입력하세요.")
+        except KeyboardInterrupt:
+            print("\n프로그램을 종료합니다.")
+            exit()
+        except:
+            print("잘못된 입력입니다. 다시 시도해주세요.")
+
+def show_config():
+    """
+    현재 설정 출력
+    """
+    print("\n" + "="*60)
+    print("현재 설정")
+    print("="*60)
+    for key, value in CONFIG.items():
+        print(f"  {key}: {value}")
+    print("="*60)
+
+def run_backtest_with_mode(mode: str, stock_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame = None):
+    """
+    선택된 모드로 백테스트 실행
+    """
+    if mode == '1':
+        print("\n일반 모드로 실행...")
+        return run_advanced_backtest(stock_data, market_data)
+    
+    elif mode == '2':
+        print("\n개선된 스윙 트레이딩 전략으로 실행...")
+        return run_improved_swing_backtest(stock_data, market_data)
+    
+    elif mode == '3':
+        print("\n랜덤 서치 최적화 모드로 실행...")
+        best_params, best_result = random_search_optimization(stock_data, market_data, n_iterations=30)
+        return best_result, best_result['trades']
+    
+    elif mode == '4':
+        print("\n단계별 최적화 모드로 실행...")
+        best_params, best_result = stepwise_optimization(stock_data, market_data)
+        return best_result, best_result['trades']
+    
+    elif mode == '5':
+        print("\nCoarse-Fine 최적화 모드로 실행...")
+        best_params, best_result = coarse_fine_optimization(stock_data, market_data)
+        return best_result, best_result['trades']
+    
+    else:
+        print("알 수 없는 모드입니다.")
+        return None, None
 
 # ============================================================================
 # 메인 실행
@@ -886,16 +1582,11 @@ if __name__ == "__main__":
     print("고급 백테스트 시스템 시작")
     print("="*60)
     
-    # 설정 출력
-    print("설정:")
-    for key, value in CONFIG.items():
-        print(f"  {key}: {value}")
-    print()
-    
-    # 1. 데이터 로드
+    # 1. 데이터 로드 (한 번만 실행하여 캐싱)
+    print("데이터 로딩 중...")
     stock_data = load_and_prepare_data(
         data_folder='minute_data',
-        max_stocks=CONFIG['max_stocks_to_load']
+        max_stocks=20  # 종목 수 제한 (50 → 20)
     )
     
     if not stock_data:
@@ -903,18 +1594,47 @@ if __name__ == "__main__":
         exit()
     
     # 2. 시장 데이터 로드
+    print("시장 데이터 로딩 중...")
     market_data = load_market_data(CONFIG['start_date'], CONFIG['end_date'])
     
-    # 3. 최적화된 백테스트 실행 (기본값)
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == '--no-optimize':
-        print("일반 모드로 실행...")
-        results, trades = run_advanced_backtest(stock_data, market_data)
-    else:
-        print("파라미터 최적화 모드로 실행...")
-        results, trades = run_optimized_backtest(stock_data, market_data)
+    print("데이터 로딩 완료!")
     
-    # 4. 고급 결과 분석
-    analyze_advanced_results(results, trades)
-    
-    print("\n고급 백테스트 완료!") 
+    # 3. 메뉴 시스템
+    while True:
+        choice = show_menu()
+        
+        if choice == '0':
+            print("프로그램을 종료합니다.")
+            break
+        
+        elif choice == '6':
+            show_config()
+            continue
+        
+        else:
+            # 백테스트 실행
+            results, trades = run_backtest_with_mode(choice, stock_data, market_data)
+            
+            if results and trades:
+                # 결과 분석
+                analyze_advanced_results(results, trades)
+                
+                # 계속할지 묻기
+                while True:
+                    try:
+                        continue_choice = input("\n다른 모드로 다시 테스트하시겠습니까? (y/n): ").strip().lower()
+                        if continue_choice in ['y', 'yes', '예']:
+                            break
+                        elif continue_choice in ['n', 'no', '아니오']:
+                            print("프로그램을 종료합니다.")
+                            exit()
+                        else:
+                            print("y 또는 n을 입력해주세요.")
+                    except KeyboardInterrupt:
+                        print("\n프로그램을 종료합니다.")
+                        exit()
+                    except:
+                        print("잘못된 입력입니다. y 또는 n을 입력해주세요.")
+            else:
+                print("백테스트 실행 중 오류가 발생했습니다.")
+                continue 
