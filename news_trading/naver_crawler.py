@@ -140,6 +140,7 @@ class NaverNewsCrawler:
             
             # 네이버 뉴스 본문 선택자들
             content_selectors = [
+                'article#dic_area',
                 'div#articleBodyContents',
                 'div#articleBody',
                 'div.article_body',
@@ -182,7 +183,7 @@ class NaverNewsCrawler:
                 logger.info(f"페이지 {page} 처리 중...")
                 current_url = base_url.format(page)
                 self.driver.get(current_url)
-                time.sleep(2)
+                time.sleep(3)  # 페이지 로딩 시간 증가
                 
                 soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                 
@@ -191,86 +192,84 @@ class NaverNewsCrawler:
                 if page_title:
                     logger.info(f"페이지 제목: {page_title.get_text()}")
                 
-                # 네이버 뉴스 목록 선택자들 (업데이트된 버전)
-                news_selectors = [
-                    'ul.list_news > li',
-                    'div.news_area > div.news_wrap',
-                    'div.news_area > a',
-                    'ul.content_list > li',
-                    'div.list_body > ul > li',  # 새로운 선택자
-                    'div.list_body > a',        # 새로운 선택자
-                    'div.news_area > a',        # 새로운 선택자
-                    'ul.list_news > li > a',    # 새로운 선택자
-                    'div.news_wrap > a',        # 새로운 선택자
-                    'a.news_tit',               # 새로운 선택자
-                    'strong.title > a',         # 새로운 선택자
-                ]
+                # 더 포괄적인 뉴스 링크 추출 방법
+                news_items = []
                 
-                items = []
-                for selector in news_selectors:
-                    items = soup.select(selector)
-                    if items:
-                        logger.info(f"선택자 '{selector}'로 {len(items)}개 항목 발견")
-                        break
+                # 방법 1: 모든 뉴스 링크 찾기
+                all_links = soup.find_all('a', href=True)
+                news_links = []
                 
-                if not items:
-                    logger.info("더 이상 항목 없음. 종료.")
-                    # 디버깅: 페이지 구조 확인
-                    logger.info("페이지 구조 확인 중...")
-                    all_links = soup.find_all('a', href=True)
-                    news_links = [link for link in all_links if 'news.naver.com' in link.get('href', '')]
-                    logger.info(f"전체 링크: {len(all_links)}개, 뉴스 링크: {len(news_links)}개")
+                for link in all_links:
+                    href = link.get('href', '')
+                    # 네이버 뉴스 링크 필터링
+                    if ('news.naver.com' in href and 
+                        ('/main/read.naver?' in href or '/article/' in href) and
+                        len(link.get_text(strip=True)) > 10):  # 제목이 있는 링크만
+                        news_links.append(link)
+                
+                logger.info(f"발견된 뉴스 링크: {len(news_links)}개")
+                
+                if not news_links:
+                    logger.info("뉴스 링크를 찾을 수 없음. 종료.")
                     break
                 
+                # 중복 제거 및 유효한 뉴스만 필터링
+                unique_news = []
+                for link in news_links:
+                    href = link.get('href', '')
+                    title = link.get_text(strip=True)
+                    
+                    # 상대 URL을 절대 URL로 변환
+                    if href.startswith('/'):
+                        full_url = "https://news.naver.com" + href
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        continue
+                    
+                    # 중복 제거 및 유효성 검사
+                    if (full_url not in seen_urls and 
+                        title and 
+                        len(title) > 10 and
+                        not any(skip in title.lower() for skip in ['광고', 'ad', 'sponsored'])):
+                        
+                        unique_news.append({
+                            'title': title,
+                            'url': full_url,
+                            'link_element': link
+                        })
+                        seen_urls.add(full_url)
+                
+                logger.info(f"유효한 뉴스: {len(unique_news)}개")
+                
+                if not unique_news:
+                    logger.info("유효한 뉴스가 없음. 종료.")
+                    break
+                
+                # 뉴스 본문 추출 (처음 5개만 테스트)
                 page_results = []
-                for item in tqdm(items, desc=f"Page {page}"):
+                for i, news in enumerate(unique_news[:5]):  # 처음 5개만 처리
                     try:
-                        # 제목과 링크 추출 (다양한 방법 시도)
-                        title_tag = None
-                        href = ""
-                        
-                        # 방법 1: 직접 a 태그인 경우
-                        if item.name == 'a':
-                            title_tag = item
-                            href = item.get('href', '')
-                        else:
-                            # 방법 2: a 태그 찾기
-                            title_tag = item.select_one('a') or item.select_one('strong.title') or item.select_one('.news_tit')
-                            if title_tag:
-                                href = title_tag.get('href', '')
-                        
-                        if not title_tag or not href:
-                            continue
-                        
-                        # 상대 URL을 절대 URL로 변환
-                        if href.startswith('/'):
-                            full_url = "https://news.naver.com" + href
-                        elif href.startswith('http'):
-                            full_url = href
-                        else:
-                            continue
-                        
-                        title = title_tag.get_text(strip=True)
-                        
-                        if not title or full_url in seen_urls:
-                            continue
+                        logger.info(f"뉴스 {i+1}/{min(5, len(unique_news))} 처리: {news['title'][:50]}...")
                         
                         # 본문 추출
-                        content = self.extract_detail_text(full_url)
+                        content = self.extract_detail_text(news['url'])
                         
-                        if content:  # 본문이 있는 경우만 저장
+                        if content and len(content) > 50:  # 본문이 충분히 긴 경우만
                             page_results.append({
-                                "title": title,
-                                "url": full_url,
+                                "title": news['title'],
+                                "url": news['url'],
                                 "content": content,
                                 "category": category,
                                 "source": "naver",
                                 "timestamp": datetime.now().isoformat()
                             })
-                            seen_urls.add(full_url)
+                            logger.info(f"뉴스 저장 완료: {len(content)}자")
+                        else:
+                            logger.warning(f"본문이 너무 짧음: {len(content) if content else 0}자")
                     
                     except Exception as e:
-                        logger.error(f"항목 처리 실패: {e}")
+                        logger.error(f"뉴스 처리 실패: {e}")
                         continue
                 
                 # 페이지별 결과 저장
@@ -280,6 +279,12 @@ class NaverNewsCrawler:
                     logger.info(f"페이지별 저장: {filename} (총 {len(page_results)}개)")
                 
                 results.extend(page_results)
+                
+                # 첫 페이지에서만 테스트
+                if page == 1:
+                    logger.info("첫 페이지 테스트 완료. 종료.")
+                    break
+                
                 page += 1
                 
             except Exception as e:

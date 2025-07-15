@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from news_trading.news_crawler import NewsCrawlerManager
 from news_trading.sentiment_analyzer import SentimentAnalyzerManager
 from news_trading.trading_signals import SignalManager
+from news_trading.swing_news_collector import SwingNewsCollector
 from news_trading.config import PERFORMANCE_CONFIG
 
 # 로깅 설정
@@ -37,6 +38,7 @@ class NewsTradingSystem:
         self.crawler_manager = NewsCrawlerManager()
         self.sentiment_analyzer = SentimentAnalyzerManager()
         self.signal_manager = SignalManager()
+        self.swing_collector = SwingNewsCollector()
         self.is_running = False
         
         logger.info("뉴스 거래 시스템 초기화 완료")
@@ -111,6 +113,7 @@ class NewsTradingSystem:
         
         # 드라이버 정리
         self.crawler_manager.close_all_drivers()
+        self.swing_collector.close()
     
     def get_system_status(self) -> Dict[str, Any]:
         """시스템 상태 조회"""
@@ -154,11 +157,12 @@ class NewsTradingCLI:
         print("2. 시스템 상태 조회")
         print("3. 테스트 뉴스 분석")
         print("4. 크롤러 테스트")
-        print("5. 종료")
+        print("5. 스윙 트레이딩 분석")
+        print("6. 종료")
         
         while True:
             try:
-                choice = input("\n선택하세요 (1-5): ").strip()
+                choice = input("\n선택하세요 (1-6): ").strip()
                 
                 if choice == '1':
                     await self._start_system()
@@ -169,6 +173,8 @@ class NewsTradingCLI:
                 elif choice == '4':
                     await self._test_crawler()
                 elif choice == '5':
+                    await self._swing_trading_analysis()
+                elif choice == '6':
                     print("시스템을 종료합니다.")
                     await self.system.stop()
                     break
@@ -236,6 +242,37 @@ class NewsTradingCLI:
                 print()
         else:
             print("❌ 크롤러 테스트 실패")
+    
+    async def _swing_trading_analysis(self):
+        """스윙 트레이딩 분석"""
+        print("스윙 트레이딩 분석을 시작합니다...")
+        try:
+            recommendations = self.system.swing_collector.get_swing_recommendations()
+            
+            print("\n=== 스윙 트레이딩 뉴스 분석 결과 ===")
+            print(f"일간 뉴스: {recommendations['daily_news_count']}개")
+            print(f"트리거 뉴스: {recommendations['trigger_news_count']}개")
+            print("\n" + recommendations['recommendation'])
+            
+            # 상위 트리거 뉴스 출력
+            if recommendations['top_triggers']:
+                print("\n=== 상위 트리거 뉴스 ===")
+                for i, news in enumerate(recommendations['top_triggers'][:5], 1):
+                    print(f"{i}. {news['title']}")
+                    print(f"   키워드: {news.get('matched_keywords', 'N/A')}")
+                    print()
+            
+            # 감정 분석 요약
+            sentiment_summary = recommendations.get('sentiment_summary', {})
+            if not sentiment_summary.empty:
+                print("=== 감정 분석 요약 ===")
+                print(sentiment_summary)
+            
+            print("\n✅ 스윙 트레이딩 분석 완료")
+            
+        except Exception as e:
+            logger.error(f"스윙 트레이딩 분석 실패: {e}")
+            print(f"❌ 스윙 트레이딩 분석 실패: {e}")
 
 async def main():
     """메인 함수"""
