@@ -18,6 +18,8 @@ from news_trading.sentiment_analyzer import SentimentAnalyzerManager
 from news_trading.trading_signals import SignalManager
 from news_trading.swing_news_collector import SwingNewsCollector
 from news_trading.config import PERFORMANCE_CONFIG
+from trading.swing_trade_simulator import simulate_trade
+import pandas as pd
 
 # 로깅 설정
 logging.basicConfig(
@@ -159,10 +161,11 @@ class NewsTradingCLI:
         print("4. 크롤러 테스트")
         print("5. 스윙 트레이딩 분석")
         print("6. 종료")
+        print("7. 뉴스 기반 스윙 트레이딩 시뮬레이션 (수익/손실 자동 검증, 날짜 입력)")
         
         while True:
             try:
-                choice = input("\n선택하세요 (1-6): ").strip()
+                choice = input("\n선택하세요 (1-7): ").strip()
                 
                 if choice == '1':
                     await self._start_system()
@@ -178,6 +181,8 @@ class NewsTradingCLI:
                     print("시스템을 종료합니다.")
                     await self.system.stop()
                     break
+                elif choice == '7':
+                    await self._swing_trading_simulation()
                 else:
                     print("잘못된 선택입니다.")
                     
@@ -273,15 +278,3 @@ class NewsTradingCLI:
         except Exception as e:
             logger.error(f"스윙 트레이딩 분석 실패: {e}")
             print(f"❌ 스윙 트레이딩 분석 실패: {e}")
-
-async def main():
-    """메인 함수"""
-    cli = NewsTradingCLI()
-    await cli.run()
-
-if __name__ == "__main__":
-    # logs 디렉토리 생성
-    os.makedirs('logs', exist_ok=True)
-    
-    # 비동기 실행
-    asyncio.run(main()) 

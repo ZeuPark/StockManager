@@ -28,9 +28,46 @@ from analysis.strategy2_analyzer import Strategy2Analyzer  # 전략 2 분석기 
 from monitor.sell_monitor import SellMonitor
 from utils.logger import get_logger
 from monitor.prometheus_metrics import set_holdings_count
+from trading.swing_trade_simulator import simulate_trade
 
 # 로거 설정
 logger = get_logger("main")
+
+# 1. 뉴스 신호 리스트 예시 (실제 파이프라인에서 생성)
+news_signals = [
+    {'stock_code': '0017Y0', 'datetime': '2025-07-08 13:30:00', 'signal': 'positive'},
+    # TODO: 실제 뉴스 분석 결과로 대체
+]
+
+results = []
+for signal in news_signals:
+    code = signal['stock_code']
+    entry_time = signal['datetime']
+    csv_path = f'minute_data/{code}_1min.csv'
+    if not os.path.exists(csv_path):
+        print(f"[경고] {csv_path} 파일이 없습니다.")
+        continue
+    df = pd.read_csv(csv_path, parse_dates=['datetime'])
+    # 진입가: 신호 발생 시점과 같거나 직전의 close
+    entry_rows = df[df['datetime'] <= pd.to_datetime(entry_time)].sort_values('datetime')
+    if entry_rows.empty:
+        print(f"[경고] {code} {entry_time} 진입시점 데이터 없음")
+        continue
+    entry_row = entry_rows.iloc[-1]
+    entry_price = entry_row['close']
+    # 시뮬레이션
+    result = simulate_trade(csv_path, entry_time, entry_price)
+    result['stock_code'] = code
+    results.append(result)
+
+if results:
+    results_df = pd.DataFrame(results)
+    print(results_df)
+    results_df.to_csv('swing_trade_results.csv', index=False)
+    print('swing_trade_results.csv 저장 완료')
+else:
+    print('시뮬레이션 결과 없음')
+
 
 class TradingSystem:
     """자동매매 시스템 메인 클래스"""

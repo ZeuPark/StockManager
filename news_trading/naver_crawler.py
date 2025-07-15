@@ -19,6 +19,8 @@ import platform
 import requests
 import zipfile
 from .config import NEWS_SOURCES
+import random
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +316,87 @@ class NaverNewsCrawler:
         if self.driver:
             self.driver.quit()
             logger.info("셀레니움 드라이버 종료")
+
+def collect_naver_stock_by_date_range(start_date, end_date, save_dir='news_trading/naver_stock_news'):
+    """
+    네이버 증권 뉴스에서 start_date~end_date까지 날짜별로 본문까지 크롤링하여
+    save_dir에 naver_stock_YYYY-MM-DD.csv로 저장
+    """
+    from news_trading.naver_crawler import NaverNewsCrawler
+    os.makedirs(save_dir, exist_ok=True)
+    crawler = NaverNewsCrawler(headless=True)
+    try:
+        cur_date = start_date
+        while cur_date <= end_date:
+            date_str = cur_date.strftime('%Y-%m-%d')
+            print(f"[{date_str}] 뉴스 크롤링 시작...")
+            # 네이버 증권 뉴스 목록 크롤링 (카테고리: stock, 날짜별)
+            news_list = crawler.crawl_stock_news_by_date(date=cur_date)
+            if not news_list:
+                print(f"[{date_str}] 뉴스 없음.")
+                cur_date += timedelta(days=1)
+                time.sleep(random.uniform(1, 3))
+                continue
+            # 본문 추출 및 DataFrame 저장
+            df = pd.DataFrame(news_list)
+            filename = os.path.join(save_dir, f"naver_stock_{date_str}.csv")
+            df.to_csv(filename, index=False, encoding='utf-8-sig')
+            print(f"[{date_str}] {len(df)}개 저장 완료: {filename}")
+            cur_date += timedelta(days=1)
+            time.sleep(random.uniform(1, 3))
+    finally:
+        crawler.close()
+
+def collect_naver_stock_all_by_paging(max_pages=2000, save_dir='news_trading/naver_stock_news'):
+    """
+    네이버 증권 뉴스(page=1~max_pages)를 최신→과거 순으로 크롤링하며,
+    각 뉴스의 날짜별로 news_trading/naver_stock_news/naver_stock_YYYY-MM-DD.csv로 저장
+    이미 저장된 날짜는 건너뜀. 본문까지 저장. 각 페이지마다 1~3초 딜레이.
+    """
+    from news_trading.naver_crawler import NaverNewsCrawler
+    os.makedirs(save_dir, exist_ok=True)
+    crawler = NaverNewsCrawler(headless=True)
+    seen_urls = set()
+    date_news = {}
+    try:
+        for page in range(1, max_pages+1):
+            print(f"[page {page}] 크롤링 중...")
+            news_list = crawler.crawl_naver_news(
+                base_url="https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=101&sid2=259&page={}",
+                max_pages=1, category="stock")
+            if not news_list:
+                print(f"[page {page}] 뉴스 없음. 종료.")
+                break
+            for news in news_list:
+                url = news.get('url')
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                # 날짜 파싱
+                ts = news.get('timestamp')
+                if isinstance(ts, str):
+                    try:
+                        ts = datetime.fromisoformat(ts)
+                    except Exception:
+                        continue
+                date_str = ts.strftime('%Y-%m-%d') if ts else None
+                if not date_str:
+                    continue
+                if date_str not in date_news:
+                    date_news[date_str] = []
+                date_news[date_str].append(news)
+            # 날짜별로 저장
+            for date_str, news_list in date_news.items():
+                filename = os.path.join(save_dir, f"naver_stock_{date_str}.csv")
+                if os.path.exists(filename):
+                    continue  # 이미 저장된 날짜는 건너뜀
+                if news_list:
+                    df = pd.DataFrame(news_list)
+                    df.to_csv(filename, index=False, encoding='utf-8-sig')
+                    print(f"[{date_str}] {len(df)}개 저장 완료: {filename}")
+            time.sleep(random.uniform(1, 3))
+    finally:
+        crawler.close()
 
 # 사용 예시
 def main():
