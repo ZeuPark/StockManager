@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import get_settings
 
 def check_settings():
@@ -8,7 +11,7 @@ def check_settings():
     
     print(f"📈 익절 기준: {s.SELL_SETTINGS['take_profit_percent']}%")
     print(f"💰 최대 거래대금: {s.RISK_MANAGEMENT['max_trade_amount']:,}원")
-    print(f"📦 최대 보유수량: {s.RISK_MANAGEMENT['max_quantity_per_stock']}주")
+    # print(f"📦 최대 보유수량: {s.RISK_MANAGEMENT['max_quantity_per_stock']}주")
     print(f"🛑 손절 기준: {s.SELL_SETTINGS['stop_loss_percent']}%")
     print(f"💵 최소 거래대금: {s.RISK_MANAGEMENT['min_trade_amount']:,}원")
     

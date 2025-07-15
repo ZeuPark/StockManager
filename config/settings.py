@@ -19,6 +19,91 @@ except ImportError:
     sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils"))
     from logger import get_logger
 
+"""
+# 📊 패턴 분석 기반 설정 변경 사항
+
+## 🔧 적용된 변경 사항
+
+### 1. 익절 기준 상향
+- **변경 전**: 2.0%
+- **변경 후**: 2.5%
+- **위치**: `config/settings.py` → `SELL_SETTINGS["take_profit_percent"]`
+- **이유**: 패턴 분석 결과 익절이 2% 이상에서만 발생하고, 평균 2.91%에서 익절됨
+
+### 2. 거래대금 제한 추가
+- **최소 거래대금**: 100,000원 (기존 유지)
+- **최대 거래대금**: 500,000원 (신규 추가)
+- **위치**: `config/settings.py` → `RISK_MANAGEMENT["max_trade_amount"]`
+- **이유**: 패턴 분석 결과 15만원 이상 거래대금에서 수익률이 높음
+
+### 3. 보유 수량 제한 추가
+- **종목당 최대 보유 수량**: 10주 (신규 추가)
+- **위치**: `config/settings.py` → `RISK_MANAGEMENT["max_quantity_per_stock"]`
+- **이유**: 패턴 분석 결과 보유 수량이 적은 종목(1-5주)이 수익률이 높음
+
+### 4. 주문 수량 계산 로직 개선
+- **위치**: `orders/order_manager.py` → `calculate_order_quantity()` 메서드
+- **추가된 기능**:
+  - 최대 거래대금 체크
+  - 최대 보유 수량 체크
+  - 현재 보유 수량 고려한 추가 매수 제한
+
+## 📈 예상 효과
+
+### 익절 기준 상향 (2.0% → 2.5%)
+- ✅ 익절 확률 증가
+- ✅ 평균 수익률 향상
+- ⚠️ 익절 횟수는 여전히 적을 수 있음
+
+### 거래대금 제한 (최대 50만원)
+- ✅ 과도한 투자 방지
+- ✅ 리스크 분산 효과
+- ✅ 15만원 이상 거래대금에서 수익률 향상
+
+### 보유 수량 제한 (최대 10주)
+- ✅ 과도한 보유 방지
+- ✅ 1-5주 보유 종목의 수익률 향상
+- ✅ 리스크 분산 효과
+
+## 🔍 적용 확인 방법
+
+### 1. 설정 확인
+```bash
+python -c "from config.settings import get_settings; s = get_settings(); print(f'익절 기준: {s.SELL_SETTINGS[\"take_profit_percent\"]}%'); print(f'최대 거래대금: {s.RISK_MANAGEMENT[\"max_trade_amount\"]:,}원'); print(f'최대 보유수량: {s.RISK_MANAGEMENT[\"max_quantity_per_stock\"]}주')"
+```
+
+### 2. 로그 확인
+- 매수 시 "최대 거래 금액으로 제한", "최대 보유 수량으로 제한" 메시지 확인
+- 익절 시 2.5% 기준으로 동작하는지 확인
+
+### 3. 성과 모니터링
+- 1-2주 후 거래 데이터 재분석
+- 익절 횟수, 평균 수익률 변화 확인
+- 손실률 변화 확인
+
+## 📝 미적용된 설정
+
+### 매수 타이밍 제한 (요청에 따라 제외)
+- 오전 30분 이후, 오후 2시 이후 매수 우선
+- 현재는 모든 시간대 매수 가능
+
+### 손절 기준 조정 (요청에 따라 제외)
+- 현재: -1.0%
+- 제안: -0.8% (더 빠른 손절)
+- 현재 기준 유지
+
+## 🎯 다음 단계
+
+1. **설정 적용 후 1-2주간 모니터링**
+2. **거래 데이터 재분석**
+3. **성과 개선 여부 확인**
+4. **필요시 추가 조정**
+
+---
+
+*패턴 분석 기반으로 최적화된 설정입니다. 실제 거래에 적용하기 전에 충분한 테스트를 권장합니다.* 
+"""
+
 
 class Settings:
     """Central configuration management for Stock Manager"""
