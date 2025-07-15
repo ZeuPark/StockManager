@@ -5,11 +5,13 @@ News Crawler Module
 
 import asyncio
 import aiohttp
+import ssl
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from datetime import datetime
 import logging
 from .config import NEWS_SOURCES, PERFORMANCE_CONFIG
+from .naver_crawler import NaverNewsCrawler
 
 logger = logging.getLogger(__name__)
 
@@ -26,33 +28,34 @@ class NewsSource(ABC):
         """뉴스 데이터 파싱"""
         pass
 
-class YonhapNewsSource(NewsSource):
-    """연합뉴스 크롤러"""
+class NaverNewsSource(NewsSource):
+    """네이버 뉴스 크롤러"""
     
-    def __init__(self):
-        self.base_url = NEWS_SOURCES['korean']['yonhap']
+    def __init__(self, headless: bool = True):
+        self.headless = headless
+        self.crawler = None
     
     async def fetch_news(self) -> List[Dict[str, Any]]:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}economy/") as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        return self.parse_news(html)
+            if not self.crawler:
+                self.crawler = NaverNewsCrawler(headless=self.headless)
+            
+            # 경제 뉴스와 주식 뉴스를 모두 수집
+            economy_news = self.crawler.crawl_economy_news(max_pages=2)
+            stock_news = self.crawler.crawl_stock_news(max_pages=2)
+            
+            all_news = economy_news + stock_news
+            logger.info(f"네이버 뉴스 수집 완료: {len(all_news)}개")
+            
+            return all_news
+            
         except Exception as e:
-            logger.error(f"연합뉴스 크롤링 실패: {e}")
-        return []
+            logger.error(f"네이버 뉴스 크롤링 실패: {e}")
+            return []
     
-    def parse_news(self, raw_data: str) -> List[Dict[str, Any]]:
-        # 실제 구현에서는 BeautifulSoup 등으로 파싱
-        # 여기서는 예시 구조만 제공
-        return [{
-            'title': '예시 뉴스 제목',
-            'content': '뉴스 내용',
-            'timestamp': datetime.now(),
-            'source': 'yonhap',
-            'url': 'https://example.com'
-        }]
+    def parse_news(self, raw_data: Any) -> List[Dict[str, Any]]:
+        # 네이버 크롤러에서 이미 파싱된 데이터를 반환
+        return raw_data if isinstance(raw_data, list) else []
 
 class NewsCrawlerManager:
     """뉴스 크롤러 관리자 - 싱글톤 패턴"""
@@ -69,7 +72,7 @@ class NewsCrawlerManager:
     def _initialize_sources(self):
         """뉴스 소스 초기화"""
         self.sources = {
-            'yonhap': YonhapNewsSource(),
+            'naver': NaverNewsSource(headless=True),
             # 새로운 소스는 여기에 추가
         }
     
@@ -102,12 +105,25 @@ class NewsCrawlerManager:
         """새로운 뉴스 소스 추가"""
         self.sources[name] = source
         logger.info(f"새로운 뉴스 소스 추가: {name}")
+    
+    def close_all_drivers(self):
+        """모든 드라이버 종료"""
+        for source_name, source in self.sources.items():
+            if hasattr(source, 'crawler') and source.crawler:
+                try:
+                    source.crawler.close()
+                    logger.info(f"{source_name} 드라이버 종료")
+                except Exception as e:
+                    logger.error(f"{source_name} 드라이버 종료 실패: {e}")
 
 # 사용 예시
 async def main():
     crawler = NewsCrawlerManager()
     news = await crawler.crawl_all_sources()
     print(f"수집된 뉴스: {len(news)}개")
+    
+    # 드라이버 정리
+    crawler.close_all_drivers()
 
 if __name__ == "__main__":
     asyncio.run(main()) 

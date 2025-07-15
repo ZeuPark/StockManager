@@ -10,10 +10,14 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
+import os
+import shutil
+import platform
+import requests
+import zipfile
 from .config import NEWS_SOURCES
 
 logger = logging.getLogger(__name__)
@@ -29,21 +33,102 @@ class NaverNewsCrawler:
     def setup_driver(self):
         """셀레니움 드라이버 설정"""
         try:
+            # ChromeDriver 경로 설정
+            driver_path = self._setup_chromedriver()
+            
             options = Options()
             if self.headless:
                 options.add_argument("--headless")
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-web-security")
+            options.add_argument("--allow-running-insecure-content")
+            options.add_argument("--ignore-certificate-errors")
+            options.add_argument("--ignore-ssl-errors")
             options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             
+            logger.info(f"ChromeDriver 경로: {driver_path}")
+            
+            # 드라이버 파일 존재 확인
+            if not os.path.exists(driver_path):
+                raise FileNotFoundError(f"ChromeDriver 파일을 찾을 수 없습니다: {driver_path}")
+            
             self.driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()), 
+                service=Service(driver_path), 
                 options=options
             )
             logger.info("셀레니움 드라이버 초기화 완료")
         except Exception as e:
             logger.error(f"드라이버 초기화 실패: {e}")
+            raise
+    
+    def _setup_chromedriver(self):
+        """ChromeDriver 설정"""
+        try:
+            # 현재 Chrome 버전 확인 (간단한 방법)
+            chrome_version = "138.0.7204.94"  # 최신 안정 버전
+            
+            # 64비트 드라이버 다운로드 URL
+            driver_url = f"https://storage.googleapis.com/chrome-for-testing-public/{chrome_version}/win64/chromedriver-win64.zip"
+            
+            # 로컬 드라이버 경로
+            driver_dir = os.path.join(os.path.expanduser("~"), ".chromedriver")
+            driver_path = os.path.join(driver_dir, "chromedriver.exe")
+            
+            # 드라이버가 없으면 다운로드
+            if not os.path.exists(driver_path):
+                logger.info("ChromeDriver 다운로드 중...")
+                self._download_chromedriver(driver_url, driver_dir)
+            
+            return driver_path
+            
+        except Exception as e:
+            logger.error(f"ChromeDriver 설정 실패: {e}")
+            raise
+    
+    def _download_chromedriver(self, url, driver_dir):
+        """ChromeDriver 다운로드"""
+        try:
+            # 디렉토리 생성
+            os.makedirs(driver_dir, exist_ok=True)
+            
+            # ZIP 파일 다운로드
+            zip_path = os.path.join(driver_dir, "chromedriver.zip")
+            response = requests.get(url)
+            response.raise_for_status()
+            
+            with open(zip_path, 'wb') as f:
+                f.write(response.content)
+            
+            # ZIP 파일 압축 해제
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(driver_dir)
+            
+            # ZIP 파일 삭제
+            os.remove(zip_path)
+            
+            # 실제 chromedriver.exe 파일 찾기
+            chromedriver_exe = None
+            for root, dirs, files in os.walk(driver_dir):
+                for file in files:
+                    if file == 'chromedriver.exe':
+                        chromedriver_exe = os.path.join(root, file)
+                        break
+                if chromedriver_exe:
+                    break
+            
+            if chromedriver_exe:
+                # 최상위 디렉토리로 이동
+                final_path = os.path.join(driver_dir, "chromedriver.exe")
+                if chromedriver_exe != final_path:
+                    shutil.move(chromedriver_exe, final_path)
+                logger.info(f"ChromeDriver 설치 완료: {final_path}")
+            else:
+                raise FileNotFoundError("chromedriver.exe 파일을 찾을 수 없습니다")
+            
+        except Exception as e:
+            logger.error(f"ChromeDriver 다운로드 실패: {e}")
             raise
     
     def extract_detail_text(self, url: str) -> str:
@@ -94,41 +179,67 @@ class NaverNewsCrawler:
         
         while page <= max_pages:
             try:
-                logger.info(f"📄 페이지 {page} 처리 중...")
+                logger.info(f"페이지 {page} 처리 중...")
                 current_url = base_url.format(page)
                 self.driver.get(current_url)
                 time.sleep(2)
                 
                 soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                 
-                # 네이버 뉴스 목록 선택자들
+                # 디버깅: 페이지 제목 확인
+                page_title = soup.find('title')
+                if page_title:
+                    logger.info(f"페이지 제목: {page_title.get_text()}")
+                
+                # 네이버 뉴스 목록 선택자들 (업데이트된 버전)
                 news_selectors = [
                     'ul.list_news > li',
                     'div.news_area > div.news_wrap',
                     'div.news_area > a',
-                    'ul.content_list > li'
+                    'ul.content_list > li',
+                    'div.list_body > ul > li',  # 새로운 선택자
+                    'div.list_body > a',        # 새로운 선택자
+                    'div.news_area > a',        # 새로운 선택자
+                    'ul.list_news > li > a',    # 새로운 선택자
+                    'div.news_wrap > a',        # 새로운 선택자
+                    'a.news_tit',               # 새로운 선택자
+                    'strong.title > a',         # 새로운 선택자
                 ]
                 
                 items = []
                 for selector in news_selectors:
                     items = soup.select(selector)
                     if items:
+                        logger.info(f"선택자 '{selector}'로 {len(items)}개 항목 발견")
                         break
                 
                 if not items:
-                    logger.info("✅ 더 이상 항목 없음. 종료.")
+                    logger.info("더 이상 항목 없음. 종료.")
+                    # 디버깅: 페이지 구조 확인
+                    logger.info("페이지 구조 확인 중...")
+                    all_links = soup.find_all('a', href=True)
+                    news_links = [link for link in all_links if 'news.naver.com' in link.get('href', '')]
+                    logger.info(f"전체 링크: {len(all_links)}개, 뉴스 링크: {len(news_links)}개")
                     break
                 
                 page_results = []
                 for item in tqdm(items, desc=f"Page {page}"):
                     try:
-                        # 제목과 링크 추출
-                        title_tag = item.select_one('a') or item.select_one('strong.title') or item.select_one('.news_tit')
-                        if not title_tag:
-                            continue
+                        # 제목과 링크 추출 (다양한 방법 시도)
+                        title_tag = None
+                        href = ""
                         
-                        href = title_tag.get('href', '')
-                        if not href:
+                        # 방법 1: 직접 a 태그인 경우
+                        if item.name == 'a':
+                            title_tag = item
+                            href = item.get('href', '')
+                        else:
+                            # 방법 2: a 태그 찾기
+                            title_tag = item.select_one('a') or item.select_one('strong.title') or item.select_one('.news_tit')
+                            if title_tag:
+                                href = title_tag.get('href', '')
+                        
+                        if not title_tag or not href:
                             continue
                         
                         # 상대 URL을 절대 URL로 변환
@@ -141,7 +252,7 @@ class NaverNewsCrawler:
                         
                         title = title_tag.get_text(strip=True)
                         
-                        if full_url in seen_urls:
+                        if not title or full_url in seen_urls:
                             continue
                         
                         # 본문 추출
@@ -159,14 +270,14 @@ class NaverNewsCrawler:
                             seen_urls.add(full_url)
                     
                     except Exception as e:
-                        logger.error(f"❌ 항목 처리 실패: {e}")
+                        logger.error(f"항목 처리 실패: {e}")
                         continue
                 
                 # 페이지별 결과 저장
                 if page_results:
                     filename = f"naver_news_{category}_page{page}.csv"
                     pd.DataFrame(page_results).to_csv(filename, index=False, encoding="utf-8-sig")
-                    logger.info(f"💾 페이지별 저장: {filename} (총 {len(page_results)}개)")
+                    logger.info(f"페이지별 저장: {filename} (총 {len(page_results)}개)")
                 
                 results.extend(page_results)
                 page += 1
@@ -218,7 +329,7 @@ def main():
         all_news = economy_news + stock_news
         df = pd.DataFrame(all_news)
         df.to_csv("naver_news_all.csv", index=False, encoding="utf-8-sig")
-        print(f"✅ 총 {len(all_news)}개 저장 완료: naver_news_all.csv")
+        print(f"총 {len(all_news)}개 저장 완료: naver_news_all.csv")
         
     finally:
         crawler.close()

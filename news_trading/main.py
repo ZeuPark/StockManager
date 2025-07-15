@@ -49,9 +49,12 @@ class NewsTradingSystem:
         try:
             while self.is_running:
                 await self._run_trading_cycle()
-                await asyncio.sleep(PERFORMANCE_CONFIG['crawl_interval'])
+                if self.is_running:  # 중지 요청이 없을 때만 대기
+                    await asyncio.sleep(PERFORMANCE_CONFIG['crawl_interval'])
         except KeyboardInterrupt:
             logger.info("사용자에 의해 시스템 중단")
+        except asyncio.CancelledError:
+            logger.info("시스템 작업 취소됨")
         except Exception as e:
             logger.error(f"시스템 오류: {e}")
         finally:
@@ -105,6 +108,9 @@ class NewsTradingSystem:
         """시스템 중지"""
         self.is_running = False
         logger.info("뉴스 거래 시스템 중지")
+        
+        # 드라이버 정리
+        self.crawler_manager.close_all_drivers()
     
     def get_system_status(self) -> Dict[str, Any]:
         """시스템 상태 조회"""
@@ -114,6 +120,26 @@ class NewsTradingSystem:
             'crawl_interval': PERFORMANCE_CONFIG['crawl_interval'],
             'last_update': datetime.now().isoformat()
         }
+    
+    async def test_crawler(self):
+        """크롤러 테스트"""
+        logger.info("크롤러 테스트 시작...")
+        try:
+            news_data = await self.crawler_manager.crawl_all_sources()
+            logger.info(f"테스트 결과: {len(news_data)}개 뉴스 수집")
+            
+            if news_data:
+                logger.info("샘플 뉴스:")
+                for i, news in enumerate(news_data[:3]):  # 처음 3개만 출력
+                    logger.info(f"  {i+1}. {news.get('title', '제목 없음')}")
+                    logger.info(f"     출처: {news.get('source', '알 수 없음')}")
+                    logger.info(f"     내용 길이: {len(news.get('content', ''))}자")
+            
+            return news_data
+            
+        except Exception as e:
+            logger.error(f"크롤러 테스트 실패: {e}")
+            return []
 
 class NewsTradingCLI:
     """명령행 인터페이스"""
@@ -127,11 +153,12 @@ class NewsTradingCLI:
         print("1. 시스템 시작")
         print("2. 시스템 상태 조회")
         print("3. 테스트 뉴스 분석")
-        print("4. 종료")
+        print("4. 크롤러 테스트")
+        print("5. 종료")
         
         while True:
             try:
-                choice = input("\n선택하세요 (1-4): ").strip()
+                choice = input("\n선택하세요 (1-5): ").strip()
                 
                 if choice == '1':
                     await self._start_system()
@@ -140,13 +167,17 @@ class NewsTradingCLI:
                 elif choice == '3':
                     await self._test_analysis()
                 elif choice == '4':
+                    await self._test_crawler()
+                elif choice == '5':
                     print("시스템을 종료합니다.")
+                    await self.system.stop()
                     break
                 else:
                     print("잘못된 선택입니다.")
                     
             except KeyboardInterrupt:
                 print("\n시스템을 종료합니다.")
+                await self.system.stop()
                 break
             except Exception as e:
                 print(f"오류: {e}")
@@ -154,6 +185,7 @@ class NewsTradingCLI:
     async def _start_system(self):
         """시스템 시작"""
         print("뉴스 거래 시스템을 시작합니다...")
+        print("Ctrl+C로 중단할 수 있습니다.")
         await self.system.start()
     
     async def _show_status(self):
@@ -188,6 +220,22 @@ class NewsTradingCLI:
         
         for signal in signals:
             print(f"  - {signal}")
+    
+    async def _test_crawler(self):
+        """크롤러 테스트"""
+        print("크롤러 테스트를 실행합니다...")
+        news_data = await self.system.test_crawler()
+        
+        if news_data:
+            print(f"✅ 크롤러 테스트 성공: {len(news_data)}개 뉴스 수집")
+            print("\n샘플 뉴스:")
+            for i, news in enumerate(news_data[:3]):
+                print(f"  {i+1}. {news.get('title', '제목 없음')}")
+                print(f"     출처: {news.get('source', '알 수 없음')}")
+                print(f"     카테고리: {news.get('category', '알 수 없음')}")
+                print()
+        else:
+            print("❌ 크롤러 테스트 실패")
 
 async def main():
     """메인 함수"""

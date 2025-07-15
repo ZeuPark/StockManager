@@ -6,8 +6,7 @@ News Trading Configuration
 # 뉴스 소스 설정
 NEWS_SOURCES = {
     'korean': {
-        'yonhap': 'https://www.yonhapnews.co.kr/',
-        'edaily': 'https://www.edaily.co.kr/',
+        'naver': 'https://news.naver.com/',
         'mk': 'https://www.mk.co.kr/',
         'hankyung': 'https://www.hankyung.com/'
     },
