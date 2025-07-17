@@ -10,6 +10,15 @@ results = []
 total_files = len(minute_files)
 processed_files = 0
 condition_counts = {'new_high': 0, 'vol_spike': 0, 'vwap_ok': 0, 'rsi_ok': 0, 'all_conditions': 0}
+tp_analysis = {
+    'total_trades': 0,
+    'tp_0.5_reached': 0,
+    'tp_1.0_reached': 0,
+    'tp_1.5_reached': 0,
+    'tp_2.0_reached': 0,
+    'tp_2.5_reached': 0,
+    'max_profit_distribution': []
+}
 
 print(f"Total files to process: {total_files}")
 
@@ -50,19 +59,17 @@ for file in tqdm(minute_files, desc="Processing files"):
         if entry_window.empty:
             continue
 
-        # 진입 조건별 카운트 (조건 강화)
+        # 진입 조건별 카운트 (조건 강화 → 점진 상승 패턴으로 수정)
         for idx, row in entry_window.iterrows():
-            # 30고가로 강화
             lookback = min(30, idx)
             high_30 = df.loc[idx-lookback:idx-1, 'high'].max() if idx > 0 else 0
+            # 점진 상승: 3분 이상 우상향
+            price_rise = df['close'].iloc[idx] > df['close'].iloc[idx - 3] if idx >= 3 else False
+            vwap_ok = row['close'] > row['vwap']
+            rsi_ok = row['rsi'] > 60
+            vol_spike = row['volume'] > 1.5 * row['vol_ma5']
             is_break_high = row['high'] > high_30 if high_30 > 0 else False
-            
-            vol_spike = row['volume'] > 2 * row['vol_ma5']
-            # VWAP 대비 0.3% 이상 상회로 변경
-            vwap_ok = row['close'] > row['vwap'] * 1.03
-            # RSI 범위 63-68 좁히기
-            rsi_ok = 63 <= row['rsi'] <= 68
-            
+            # 기존 카운트 유지 (원하면 수정 가능)
             if is_break_high:
                 condition_counts['new_high'] += 1
             if vol_spike:
@@ -71,35 +78,31 @@ for file in tqdm(minute_files, desc="Processing files"):
                 condition_counts['vwap_ok'] += 1
             if rsi_ok:
                 condition_counts['rsi_ok'] += 1
-            # 조건 조합: 핵심2개(고점돌파 또는 거래량급증) + 보조 2개(RSI적정)
-            if (is_break_high or vol_spike) and vwap_ok and rsi_ok:
+            # 조건 조합: 급등 배제, 점진 상승 강화
+            if price_rise and (is_break_high or vol_spike) and vwap_ok and rsi_ok:
                 condition_counts['all_conditions'] += 1
                 buy_time = row['datetime']
                 buy_price = row['close']
                 buy_idx = idx
-                # 10~11 등
                 ten = df[(df['datetime'].dt.time >= pd.to_datetime('10:00').time()) &
                          (df['datetime'].dt.time < pd.to_datetime('11:00').time())]
                 high_10_11 = ten['high'].max()
                 close_10_11 = ten['close'].iloc[-1]
                 close_pos_10_11 = close_10_11 / high_10_11 if high_10_11 > 0 else np.nan
-                # 10:10~10:30 매수강도 proxy
                 buy_strength = df[(df['datetime'].dt.time >= pd.to_datetime('10:10').time()) &
                                   (df['datetime'].dt.time <= pd.to_datetime('10:30').time())]['volume'].sum()
-                # ▼▼▼ 기본 청산 로직 (안정적 버전) ▼▼▼
+
+                # ▼▼▼ 기본 청산 로직 (TP/Trailing 완화) ▼▼▼
                 sell_price = np.nan
                 sell_time = None
-                sell_reason = ''
+                sell_reason = None
                 max_price = buy_price
                 min_price = buy_price
                 trailing_active = False
                 peak_price = buy_price
-                position = 1.0  # 1=전량, 0.5=부분청산 후
-                partial_sell = False
-                partial_sell_price = np.nan
-                partial_sell_time = None
-                partial_sell_reason = ''
-                
+                position = 1.0
+                max_profit_reached = 0.0
+
                 sell_window = df[df.index > buy_idx]
                 for _, srow in sell_window.iterrows():
                     price = srow['close']
@@ -107,96 +110,69 @@ for file in tqdm(minute_files, desc="Processing files"):
                     low = srow['low']
                     max_price = max(max_price, high)
                     min_price = min(min_price, low)
-                    ret_now = (price - buy_price) / buy_price
-                    
-                    # VWAP 이탈 손절: 봉 종가 기준으로 변경 (false break 대응)
-                    if price < srow['vwap'] * 0.997:
+                    current_return = (price - buy_price) / buy_price
+                    max_profit = (max_price - buy_price) / buy_price
+                    # max_profit_reached를 루프 내에서 지속 갱신
+                    max_profit_reached = max(max_profit_reached, max_profit)
+
+                    # Smart Trailing Stop 활성화 조건 (완화)
+                    smart_trailing_active = max_profit > 0.015
+                    trailing_threshold = max_price * 0.985  # 고점 대비 -1.5%
+
+                    # 1. 고정 목표 수익 (1.0%로 하향)
+                    if current_return >= 0.01:
+                        sell_reason = "Fixed TP 1.0%"
                         sell_price = price
                         sell_time = srow['datetime']
-                        sell_reason = 'VWAP Break'
-                        position = 0.0
                         break
-                    
-                    # Target Profit(2%) 익절로 조정 (close 기준)
-                    elif (price - buy_price) / buy_price >= 0.02:
+
+                    # 2. Smart Trailing Stop (조건부)
+                    elif smart_trailing_active and price < trailing_threshold:
+                        sell_reason = "Smart Trailing -1.5%"
                         sell_price = price
                         sell_time = srow['datetime']
-                        sell_reason = 'Target Profit'
-                        position = 0.0
                         break
-                    
-                    # 부분청산: 1 도달 시 40% 청산 (비중 확대)
-                    elif not partial_sell and (price - buy_price) / buy_price >= 0.01:
-                        partial_sell = True
-                        partial_sell_price = price
-                        partial_sell_time = srow['datetime']
-                        partial_sell_reason = 'Partial Profit 1%'
-                        position = 0.6  # 40% 청산 후 60% 보유
-                        # 나머지 60%는 계속 보유
-                    
-                    # 복합 익절: RSI > 70 and return > 0.8% (조건 완화)
-                    if not trailing_active and srow['rsi'] > 70 and ret_now > 0.008:
-                        trailing_active = True
-                        peak_price = high
-                        continue
-                    
-                    # 트레일링 스탑: 최고가 대비 -1% 하락, 단 최소 수익률 1.5% 이상 (조건 완화)
-                    if trailing_active:
-                        if high > peak_price:
-                            peak_price = high
-                        if (peak_price - buy_price) / buy_price >= 0.015:
-                            if price <= peak_price * 0.99:
-                                sell_price = price
-                                sell_time = srow['datetime']
-                                sell_reason = 'Trailing Stop'
-                                position = 0.0
-                                break
-                    
-                    # 🔹 1단계: 조건부 EOD 청산 (손실 중인 포지션만 마감)
-                    if srow['datetime'].time() >= pd.to_datetime('15:00').time():
-                        if ret_now < 0:
+
+                    # 3. Hard Stop Loss
+                    elif current_return <= -0.015:
+                        sell_reason = "Hard Stop Loss -1.5%"
+                        sell_price = price
+                        sell_time = srow['datetime']
+                        break
+
+                    # 4. EOD (익일 청산 조건 보완)
+                    elif srow['datetime'].time() > pd.to_datetime('15:00').time():
+                        if current_return < 0.005:
+                            sell_reason = "EOD Cut Small Gain"
                             sell_price = price
                             sell_time = srow['datetime']
-                            sell_reason = 'EOD Loss'
-                            position = 0.0
                             break
                         else:
-                            # 수익 중이면 오버나잇 보유
-                            continue
-                    
-                    # 🔹 2단계: 마감 30분 전 타이트 트레일링 스탑 (14:30~15:00)
-                    if srow['datetime'].time() >= pd.to_datetime('14:30').time():
-                        if ret_now > 0.005:  # 0.5% 이상 수익 중일 때만
-                            if price < peak_price * 0.992:  # 고점 대비 0.8% 이탈
-                                sell_price = price
-                                sell_time = srow['datetime']
-                                sell_reason = 'Tight Trailing Before Close'
-                                position = 0.0
-                                break
-                    
-                    # 🔹 3단계: 익일 자동 청산 로직 (09:10 체크)
-                    if srow['datetime'].time() == pd.to_datetime('09:10').time():
-                        if ret_now > 0.01:  # 1% 이상 수익 중이면 익일 청산
-                            sell_price = price
+                            sell_reason = "Overnight Profit"
+                            sell_price = price  # 임시로 현재가 사용
                             sell_time = srow['datetime']
-                            sell_reason = 'Overnight Profit'
-                            position = 0.0
                             break
-                        elif drawdown < -0.03:  # 3% 이상 손실 시 갭다운 손절
-                            sell_price = price
-                            sell_time = srow['datetime']
-                            sell_reason = 'Gap Down Stop Loss'
-                            position = 0.0
-                            break
-                
+
+                # TP 도달률 분석 기록 (실제 청산된 거래만, 1.0% 기준으로 수정)
+                if not np.isnan(sell_price):
+                    tp_analysis['total_trades'] += 1
+                    tp_analysis['max_profit_distribution'].append(max_profit_reached)
+                    if max_profit_reached >= 0.005:
+                        tp_analysis['tp_0.5_reached'] += 1
+                    if max_profit_reached >= 0.01:
+                        tp_analysis['tp_1.0_reached'] += 1
+                    if max_profit_reached >= 0.015:
+                        tp_analysis['tp_1.5_reached'] += 1
+                    if max_profit_reached >= 0.02:
+                        tp_analysis['tp_2.0_reached'] += 1
+                    if max_profit_reached >= 0.025:
+                        tp_analysis['tp_2.5_reached'] += 1
+
                 # 결과 기록
                 if not np.isnan(sell_price):
-                    ret = (sell_price - buy_price) / buy_price * position
                     max_profit = (max_price - buy_price) / buy_price
                     drawdown = (min_price - buy_price) / buy_price
-                    # 부분청산 수익 포함
-                    if partial_sell:
-                        ret = 0.4 * ((partial_sell_price - buy_price) / buy_price) + 0.6 * ((sell_price - buy_price) / buy_price)
+                    ret = (sell_price - buy_price) / buy_price
                     results.append({
                         'stock': stock_code,
                         'buy_time': buy_time,
@@ -205,10 +181,6 @@ for file in tqdm(minute_files, desc="Processing files"):
                         'sell_price': sell_price,
                         'return': ret,
                         'sell_reason': sell_reason,
-                        'partial_sell': partial_sell,
-                        'partial_sell_price': partial_sell_price,
-                        'partial_sell_time': partial_sell_time,
-                        'partial_sell_reason': partial_sell_reason,
                         'close_pos_10_11': close_pos_10_11,
                         'buy_strength': buy_strength,
                         'rsi_at_buy': row['rsi'],
@@ -227,6 +199,27 @@ print(f"Processed files: {processed_files}")
 print(f"Condition counts:")
 for condition, count in condition_counts.items():
     print(f"  {condition}: {count}")
+
+# TP 도달률 분석 출력
+print(f"\n=== Target Profit 도달률 분석 ===")
+total_trades = tp_analysis['total_trades']
+if total_trades > 0:
+    print(f"총 거래 수: {total_trades}")
+    print(f"0.5% 도달률: {tp_analysis['tp_0.5_reached']} ({tp_analysis['tp_0.5_reached']/total_trades*100:.1f}%)")
+    print(f"1.0% 도달률: {tp_analysis['tp_1.0_reached']} ({tp_analysis['tp_1.0_reached']/total_trades*100:.1f}%)")
+    print(f"1.5% 도달률: {tp_analysis['tp_1.5_reached']} ({tp_analysis['tp_1.5_reached']/total_trades*100:.1f}%)")
+    print(f"2.0% 도달률: {tp_analysis['tp_2.0_reached']} ({tp_analysis['tp_2.0_reached']/total_trades*100:.1f}%)")
+    print(f"2.5% 도달률: {tp_analysis['tp_2.5_reached']} ({tp_analysis['tp_2.5_reached']/total_trades*100:.1f}%)")
+    
+    # 최대 수익률 분포 분석
+    max_profits = np.array(tp_analysis['max_profit_distribution'])
+    print(f"\n최대 수익률 통계:")
+    print(f"평균 최대 수익률: {max_profits.mean():.3f}")
+    print(f"중간값 최대 수익률: {np.median(max_profits):.3f}")
+    print(f"0.1% 이하: {(max_profits <= 0.001).sum()} ({np.mean(max_profits <= 0.001)*100:.1f}%)")
+    print(f"0.3% 이하: {(max_profits <= 0.003).sum()} ({np.mean(max_profits <= 0.003)*100:.1f}%)")
+    print(f"0.5% 이하: {(max_profits <= 0.005).sum()} ({np.mean(max_profits <= 0.005)*100:.1f}%)")
+    print(f"1.0% 이하: {(max_profits <= 0.01).sum()} ({np.mean(max_profits <= 0.01)*100:.1f}%)")
 
 if results:
     results_df = pd.DataFrame(results)
@@ -287,3 +280,48 @@ if results:
 else:
     print("\nNo trades were executed under the current strategy conditions.")
     print("Consider relaxing the entry conditions or checking data quality.") 
+
+# ▼▼▼ 진입 후 20~60분 가격 분포 분석 및 시각화 ▼▼▼
+from datetime import timedelta
+
+drift_records = []
+
+for trade in results:
+    entry_time = trade['buy_time']
+    stock = trade['stock']
+    try:
+        df = pd.read_csv(f'minute_data/{stock}.csv', parse_dates=['datetime'])
+        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+        df = df.dropna(subset=['datetime', 'close'])
+        df = df.sort_values('datetime')
+
+        sub = df[(df['datetime'] > entry_time) & 
+                 (df['datetime'] <= entry_time + timedelta(minutes=60))].copy()
+        sub['delta_minutes'] = (sub['datetime'] - entry_time).dt.total_seconds() / 60
+        sub['pct_change'] = (sub['close'] - trade['buy_price']) / trade['buy_price']
+
+        drift_records.append(sub[['delta_minutes', 'pct_change']])
+    except Exception as e:
+        continue
+
+# 통합 분석
+if drift_records:
+    all_drift = pd.concat(drift_records, ignore_index=True)
+    drift_summary = all_drift.groupby('delta_minutes')['pct_change'].agg(['mean', 'median', 'std'])
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(drift_summary.index, drift_summary['mean'], label='Mean')
+    plt.plot(drift_summary.index, drift_summary['median'], label='Median')
+    plt.fill_between(drift_summary.index,
+                     drift_summary['mean'] - drift_summary['std'],
+                     drift_summary['mean'] + drift_summary['std'],
+                     color='gray', alpha=0.3, label='±1 STD')
+    plt.axhline(0, color='black', linestyle='--')
+    plt.title('Drift Pattern After Entry (0–60min)')
+    plt.xlabel('Minutes After Entry')
+    plt.ylabel('Cumulative Return')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('drift_pattern.png')
+    plt.show() 
