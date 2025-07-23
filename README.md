@@ -89,69 +89,63 @@ StockManager/
 
 ## 🛠️ Technical Stack & Implementation Details
 
-### 1. **Python 기반 아키텍처**
-- **주 언어:** Python 3.x  
-  데이터 분석, 실시간 처리, 백테스트, API 연동 등 전 영역에 활용
+### 1. **Python-Based Architecture**
+- **Primary Language:** Python 3.x  
+  Used for all aspects including data analysis, real-time processing, backtesting, and API integration.
 
-### 2. **실시간 데이터 처리**
-- **WebSocket 클라이언트:**  
-  실시간 시세 데이터 수신 및 이벤트 기반 트레이딩 신호 처리  
-  `api/websocket_client.py`에서 비동기 WebSocket 통신 구현
-- **REST API 연동:**  
-  증권사 API(예: 한국투자증권)와의 통신을 위한 REST 클라이언트  
-  주문, 잔고조회, 체결내역 등 실시간/비실시간 데이터 처리
+### 2. **Real-Time Data Processing**
+- **WebSocket Client:**  
+  Asynchronous WebSocket communication for real-time market data streaming and event-driven trading signal processing, implemented in `api/websocket_client.py`.
+- **REST API Integration:**  
+  REST client for brokerage APIs (e.g., Korea Investment & Securities) to handle order placement, account balance, and trade history in both real-time and batch modes.
 
-### 3. **이벤트 기반 트레이딩 엔진**
+### 3. **Event-Driven Trading Engine**
 - **Event-driven Architecture:**  
-  실시간 데이터 수신 → 신호 생성 → 주문 실행 → 포지션 관리의 일련의 흐름을 이벤트로 처리  
-  `core/real_time_trading.py` 등에서 구현
+  The entire trading flow—data reception, signal generation, order execution, and position management—is handled via event-driven modules (see `core/real_time_trading.py`).
 
-### 4. **전략 백테스팅 및 최적화**
-- **1분봉 데이터 기반 백테스트:**  
-  `core/backtest_gradual_riser.py` 등에서 1분 단위로 전략 성과 평가
+### 4. **Strategy Backtesting & Optimization**
+- **1-Minute Bar Backtesting:**  
+  High-resolution backtesting using 1-minute OHLCV data (see `core/backtest_gradual_riser.py`).
 - **Walk-forward Optimization:**  
-  과최적화 방지를 위한 구간별 최적화 및 검증  
-  `core/parameter_optimizer.py`에서 구현
+  Prevents overfitting by optimizing and validating parameters on rolling windows (`core/parameter_optimizer.py`).
 - **Batch Backtesting:**  
-  다양한 파라미터/전략 조합을 반복적으로 평가
+  Automated evaluation of multiple parameter/strategy combinations for robustness.
 
-### 5. **고급 분석 및 시각화**
-- **전략 성과 분석:**  
-  수익률, MDD, 샤프지수 등 다양한 지표 산출  
-  `analysis/analysis_visualizer.py` 등에서 시각화 지원
-- **파라미터 민감도 분석:**  
-  전략 파라미터 변화에 따른 성과 민감도 분석
+### 5. **Advanced Analytics & Visualization**
+- **Performance Analysis:**  
+  Calculates metrics such as return, MDD, Sharpe ratio, and more. Visualization tools in `analysis/analysis_visualizer.py`.
+- **Parameter Sensitivity Analysis:**  
+  Evaluates how strategy performance changes with parameter variations.
 
-### 6. **리스크 및 포지션 관리**
-- **자동 포지션 사이징, 손절/익절, 트레일링 스탑**  
-  실시간 및 백테스트 모두에서 적용
-- **시장 필터링:**  
-  KOSPI 등 시장지수 기반 매매 필터링
+### 6. **Risk & Position Management**
+- **Automated Position Sizing, Stop Loss/Take Profit, Trailing Stop:**  
+  Applied in both real-time trading and backtesting.
+- **Market Regime Filtering:**  
+  Uses KOSPI or other index-based filters to adapt trading to market conditions.
 
-### 7. **데이터 수집 및 관리**
-- **자동 데이터 수집 스크립트:**  
-  `data_collection/` 내 다양한 수집기
-- **DB 관리:**  
-  SQLite 등 경량 DB를 통한 거래/분석 데이터 저장  
-  `database/` 내 스키마 및 초기화 스크립트
+### 7. **Data Collection & Management**
+- **Automated Data Collection Scripts:**  
+  Various collectors in `data_collection/` for historical and real-time data.
+- **Database Management:**  
+  Lightweight database (e.g., SQLite) for storing trades and analytics, with schema and initialization scripts in `database/`.
 
-### 8. **모듈화 및 확장성**
-- **폴더별 역할 분리:**  
-  전략, 데이터, 주문, 모니터링, 유틸리티 등 기능별 디렉터리 구조
-- **유닛/통합 테스트:**  
-  `tests/` 내 주요 기능별 테스트 코드
+### 8. **Modularity & Extensibility**
+- **Separation of Concerns:**  
+  Clear directory structure for strategies, data, orders, monitoring, and utilities.
+- **Unit & Integration Testing:**  
+  Comprehensive tests for all major modules in `tests/`.
 
-### 9. **운영 및 배포**
-- **Docker 기반 배포:**  
-  `deployment/` 내 Dockerfile, docker-compose로 손쉬운 환경 구축
+### 9. **Deployment & Operations**
+- **Dockerized Deployment:**  
+  Easy environment setup using Dockerfile and docker-compose in `deployment/`.
 - **Nginx Reverse Proxy:**  
-  대시보드/모니터링 서비스 프록시 지원
+  Proxy support for dashboards and monitoring services.
 
-### 10. **모니터링 및 로깅**
+### 10. **Monitoring & Logging**
 - **Prometheus Metrics Exporter:**  
-  실시간 지표 수집 및 외부 모니터링 연동
-- **로깅 시스템:**  
-  `utils/logger.py` 등에서 로그 관리
+  Real-time metrics collection and integration with external monitoring tools.
+- **Logging System:**  
+  Centralized logging via `utils/logger.py` for auditability and debugging.
 
 ---
 
