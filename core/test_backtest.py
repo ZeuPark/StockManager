@@ -3,7 +3,7 @@
 완만 상승 패턴 백테스트 테스트 스크립트
 """
 
-from gradual_rise_backtest import GradualRiseBacktest
+from core.gradual_rise_backtest import GradualRiseBacktest
 import time
 
 def test_basic_backtest():

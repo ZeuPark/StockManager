@@ -48,7 +48,7 @@ for exp in range(N_EXPERIMENTS):
             'orb_max_min': trial.suggest_int('orb_max_min', 10, 60)
         }
         try:
-            from gradual_rise_backtest import GradualRiseBacktest
+            from core.gradual_rise_backtest import GradualRiseBacktest
             backtest = GradualRiseBacktest(optimizer.data_path)
             backtest.parameters.update(params)
             metrics, trades = backtest.run_backtest(stock_codes=train_codes, date_range=TRAIN_RANGE, verbose=False)
@@ -68,7 +68,7 @@ for exp in range(N_EXPERIMENTS):
     best_params = optimizer.optimize(n_trials=N_TRIALS)
 
     # 검증 (test set)
-    from gradual_rise_backtest import GradualRiseBacktest
+    from core.gradual_rise_backtest import GradualRiseBacktest
     backtest = GradualRiseBacktest('minute_data')
     backtest.parameters.update(best_params)
     test_metrics, test_trades = backtest.run_backtest(stock_codes=test_codes, date_range=TEST_RANGE, verbose=False)

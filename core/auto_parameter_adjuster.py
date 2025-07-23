@@ -2,7 +2,7 @@ import random
 import glob
 import os
 import pandas as pd
-from gradual_rise_backtest import GradualRiseBacktest
+from core.gradual_rise_backtest import GradualRiseBacktest
 import datetime
 
 # === CONFIG ===

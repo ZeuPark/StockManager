@@ -1,7 +1,7 @@
 import optuna
 import pandas as pd
 import numpy as np
-from gradual_rise_backtest import GradualRiseBacktest
+from core.gradual_rise_backtest import GradualRiseBacktest
 import warnings
 import glob
 import os
