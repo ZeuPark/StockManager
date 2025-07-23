@@ -1,3 +1,14 @@
+"""
+Backtest Script: Gradual Riser Strategy
+
+This script performs event-driven backtesting for the 'Gradual Riser' intraday strategy using 1-minute bar data.
+- Loads minute-level data for each stock
+- Calculates technical indicators (VWAP, RSI)
+- Defines buy/sell logic and risk management
+- Outputs summary statistics and sell reason distribution
+
+Author: Zeu Park
+"""
 import pandas as pd
 import numpy as np
 from glob import glob
