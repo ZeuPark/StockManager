@@ -19,7 +19,7 @@ DEFAULT_PARAMETERS = {
     'orb_max_min': 30         # ORB 최대 대기 (30분)
 }
 # 테스트/최적화 구간
-TRAIN_RANGE = ('2024-01-01', '2024-12-31')
+TRAIN_RANGE = ('2024-11-01', '2024-11-30')
 TEST_RANGE = ('2025-06-01', '2025-06-30')
 
 class GradualRiseBacktest:

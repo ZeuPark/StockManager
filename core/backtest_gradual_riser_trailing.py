@@ -3,6 +3,9 @@ import numpy as np
 from glob import glob
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.indicators import calc_vwap, calc_rsi
 
 minute_files = glob('minute_data/*.csv')
