@@ -202,7 +202,6 @@ python core/real_time_trading.py
 ### Real-Time Trading Dashboard (Sample)
 ![Real-Time Dashboard](docs/example_realtime_dashboard.png)
 
-*If you need actual result images, place your PNG/JPG files in the `docs/` folder and update the links above.*
 
 ---
 
